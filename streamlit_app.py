@@ -1,235 +1,147 @@
 import streamlit as st
-import json
-import os
 import requests
-import io
+import json
 from docx import Document
-from docx.shared import Pt, Inches, RGBColor
-from docx.enum.text import WD_ALIGN_PARAGRAPH
 from pptx import Presentation
-from pptx.util import Inches as PptInches, Pt as PptPt
+from pptx.util import Inches, Pt
+import io
 
-# ==========================================
-# دیزاینا لاپەڕێ ماڵپەری
-# ==========================================
-st.set_page_config(
-    page_title="دروستکەرێ ڕاپۆرت و سمیناران",
-    page_icon="🎓",
-    layout="centered"
-)
+st.set_page_config(page_title="دروستکەرێ ڕاپۆرت و سمیناران", page_icon="🎓", layout="centered")
 
-# ڕێکخستنا شێوازێ نڤیسینێ و ئاراستەیێ کوردی (RTL)
 st.markdown("""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;600;700;800&display=swap');
-    html, body, [class*="css"] {
-        font-family: 'Vazirmatn', sans-serif;
-        direction: rtl;
-        text-align: right;
-    }
-    .stTextInput > div > div > input, .stSelectbox > div > div > div {
-        text-align: right;
-        direction: rtl;
-    }
+    .stApp { direction: rtl; text-align: right; }
+    p, h1, h2, h3, label { text-align: right !important; }
     </style>
 """, unsafe_allow_html=True)
 
-st.title("🎓 پلاتفۆڕمێ دروستکرنا ڕاپۆرت و سمیناران")
-st.write("ناڤێ بابەتێ خو بنڤیسە دا کو د خولەکەکێ دا ڕاپۆرتا Word و سمینارا PowerPoint ب شێوەیەکێ ئەکادیمی بو تە بەرهەڤ ببیت.")
+st.title("🎓 سیستەمێ زیرەکێ دروستکرنا ڕاپۆرت و سمیناران")
+st.write("ناڤێ بابەتی بنڤیسە دا کو ب شێوەیەکێ ستاندارد و ئەکادیمی ڕاپۆرت و پاوەرپۆینت بۆ تە بهێنە دروستکرن.")
 
-# ==========================================
-# پەیوەندی ب Gemini API
-# کلیلا تە د ناڤ سێرڤەری دا دپارێزیت (Secrets)
-# ==========================================
-def get_api_key():
-    # دەمێ ل سەر Streamlit Cloud بەلاڤ دکەی، ل بەشێ Secrets دادمەزرێنی
-    if "GEMINI_API_KEY" in st.secrets:
-        return st.secrets["GEMINI_API_KEY"]
-    return os.environ.get("GEMINI_API_KEY", "")
+# کۆنترۆڵکرنا کلیلێ (ئەگەر د Secrets دا هەبیت یان ل دەستپێکێ لێبدەت)
+api_key = st.secrets.get("GEMINI_API_KEY", "")
+if not api_key:
+    api_key = st.text_input("کلیلا Gemini API لێرە دابنێ:", type="password")
 
-def call_gemini(api_key, prompt):
-   url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+topic = st.text_input("بابەتێ ڕاپۆرتێ چییە؟ (بۆ نموونە: زیرەکییا دەستکرد د نوشداریدا)")
+language = st.selectbox("زمانێ نڤیسینێ هەڵبژێرە:", ["کوردی (بادینی)", "کوردی (سۆرانی)", "English", "العربية"])
+pages_count = st.slider("ژمارا لاپەڕێن پێدڤی بۆ ڕاپۆرتێ:", min_value=2, max_value=8, value=3)
+
+def generate_academic_content(topic, lang, pages, key):
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={key}"
     headers = {"Content-Type": "application/json"}
+    
+    prompt = f"""
+    You are an academic researcher. Generate a complete academic report and presentation slides on the topic: "{topic}".
+    Language to write in: {lang}.
+    Length: Approximately {pages} pages of content.
+
+    Return the result STRICTLY as a valid JSON object without markdown fences, with these exact keys:
+    {{
+        "title": "Title of the research",
+        "introduction": "Detailed academic introduction",
+        "sections": [
+            {{"heading": "Section Heading", "content": "Detailed academic body content"}}
+        ],
+        "conclusion": "Academic conclusion summary",
+        "references": ["Ref 1 in APA format", "Ref 2 in APA format", "Ref 3 in APA format"],
+        "slides": [
+            {{"slide_title": "Slide Title", "bullet_points": ["Point 1", "Point 2", "Point 3"]}}
+        ]
+    }}
+    """
+    
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.3}
+        "generationConfig": {"response_mime_type": "application/json"}
     }
-    res = requests.post(url, headers=headers, json=payload, timeout=60)
-    if res.status_code == 200:
-        return res.json()['candidates'][0]['content']['parts'][0]['text']
-    else:
-        raise Exception(f"API Error: {res.text}")
+    
+    response = requests.post(url, headers=headers, json=payload)
+    if response.status_code != 200:
+        raise Exception(f"API Error: {response.text}")
+    
+    result = response.json()
+    text_content = result["candidates"][0]["content"]["parts"][0]["text"]
+    return json.loads(text_content)
 
-# ==========================================
-# دروستکرنا Word د ناڤ بیرگەهێ دا (Memory Buffer)
-# ==========================================
-def generate_docx(data):
+def create_docx(data):
     doc = Document()
+    doc.add_heading(data.get("title", "ڕاپۆرت"), level=0)
     
-    # لاپەڕێ ناڤونیشانی
-    p_title = doc.add_paragraph()
-    p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run_t = p_title.add_run(data.get("title", "Academic Report"))
-    run_t.font.name = "Calibri"
-    run_t.font.size = Pt(26)
-    run_t.font.bold = True
-    run_t.font.color.rgb = RGBColor(31, 78, 121)
+    doc.add_heading("پێشەکی (Introduction)", level=1)
+    doc.add_paragraph(data.get("introduction", ""))
     
-    p_info = doc.add_paragraph()
-    p_info.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    if data.get("student_name"):
-        p_info.add_run(f"ئامادەکرن: {data['student_name']}\n").font.size = Pt(14)
-    if data.get("department"):
-        p_info.add_run(f"پشک: {data['department']}\n").font.size = Pt(13)
-    if data.get("supervisor"):
-        p_info.add_run(f"سەرپەرشتیار: {data['supervisor']}\n").font.size = Pt(13)
+    for sec in data.get("sections", []):
+        doc.add_heading(sec.get("heading", ""), level=1)
+        doc.add_paragraph(sec.get("content", ""))
         
-    doc.add_page_break()
-    
-    # پێشەکی
-    h1 = doc.add_heading("1. پێشەکی (Introduction)", level=1)
-    h1.runs[0].font.color.rgb = RGBColor(31, 78, 121)
-    p_intro = doc.add_paragraph(data.get("introduction", ""))
-    p_intro.paragraph_format.line_spacing = 1.25
-    p_intro.paragraph_format.space_after = Pt(12)
-    
-    # تەوەرێن سەرەکی
-    sections = data.get("sections", [])
-    for idx, sec in enumerate(sections, start=2):
-        h = doc.add_heading(f"{idx}. {sec.get('heading', '')}", level=1)
-        h.runs[0].font.color.rgb = RGBColor(31, 78, 121)
-        p = doc.add_paragraph(sec.get("content", ""))
-        p.paragraph_format.line_spacing = 1.25
-        p.paragraph_format.space_after = Pt(12)
-        
-    # دەرئەنجام
-    h_conc = doc.add_heading(f"{len(sections) + 2}. دەرئەنجام (Conclusion)", level=1)
-    h_conc.runs[0].font.color.rgb = RGBColor(31, 78, 121)
+    doc.add_heading("دەرئەنجام (Conclusion)", level=1)
     doc.add_paragraph(data.get("conclusion", ""))
     
-    # سەرچاوە
-    h_ref = doc.add_heading(f"{len(sections) + 3}. سەرچاوە (References - APA)", level=1)
-    h_ref.runs[0].font.color.rgb = RGBColor(31, 78, 121)
-    for r in data.get("references", []):
-        doc.add_paragraph(r, style='List Bullet')
+    doc.add_heading("سەرچاوەکان (References)", level=1)
+    for ref in data.get("references", []):
+        doc.add_paragraph(f"• {ref}")
         
-    buffer = io.BytesIO()
-    doc.save(buffer)
-    buffer.seek(0)
-    return buffer
+    bio = io.BytesIO()
+    doc.save(bio)
+    bio.seek(0)
+    return bio
 
-# ==========================================
-# دروستکرنا PowerPoint د ناڤ بیرگەهێ دا
-# ==========================================
-def generate_pptx(data):
+def create_pptx(data):
     prs = Presentation()
-    prs.slide_width = PptInches(13.33)
-    prs.slide_height = PptInches(7.5)
     
     # Title Slide
-    s0 = prs.slides.add_slide(prs.slide_layouts[0])
-    s0.shapes.title.text = data.get("title", "Presentation")
-    s0.placeholders[1].text = f"ئامادەکرن: {data.get('student_name', '')}\n{data.get('department', '')}"
+    title_slide_layout = prs.slide_layouts[0]
+    slide = prs.slides.add_slide(title_slide_layout)
+    slide.shapes.title.text = data.get("title", "پریزێنتەیشن")
+    slide.placeholders[1].text = "ئامادەکرییە ژ لایێ سیستەمێ ئەکادیمی یێ زیرەک"
     
     # Content Slides
-    for item in data.get("slides", []):
-        s = prs.slides.add_slide(prs.slide_layouts[1])
-        s.shapes.title.text = item.get("slide_title", "")
-        tf = s.placeholders[1].text_frame
-        pts = item.get("bullet_points", [])
-        if pts:
-            tf.text = pts[0]
-            for p in pts[1:]:
-                p_elem = tf.add_paragraph()
-                p_elem.text = p
-                
-    buffer = io.BytesIO()
-    prs.save(buffer)
-    buffer.seek(0)
-    return buffer
+    bullet_slide_layout = prs.slide_layouts[1]
+    for s_data in data.get("slides", []):
+        slide = prs.slides.add_slide(bullet_slide_layout)
+        slide.shapes.title.text = s_data.get("slide_title", "")
+        body_shape = slide.shapes.placeholders[1]
+        tf = body_shape.text_frame
+        tf.clear()
+        for pt in s_data.get("bullet_points", []):
+            p = tf.add_paragraph()
+            p.text = pt
+            p.level = 0
+            
+    bio = io.BytesIO()
+    prs.save(bio)
+    bio.seek(0)
+    return bio
 
-# ==========================================
-# فۆڕما زانیاریێن قوتابی
-# ==========================================
-with st.form("academic_form"):
-    topic = st.text_input("بابەتێ سەرەکی یێ ڕاپۆرتێ (Topic) *", placeholder="بۆ نموونە: Artificial Intelligence in Healthcare")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        student_name = st.text_input("ناڤێ قوتابی", placeholder="ناڤێ خو بنڤیسە")
-    with col2:
-        dept = st.text_input("پشک / کولێژ", placeholder="بۆ نموونە: پشکا زانستێن کۆمپیۆتەری")
-        
-    supervisor = st.text_input("ناڤێ مامۆستا / سەرپەرشتیار (ئارەزوومەندانە)")
-    lang = st.selectbox("زمانێ ناڤەرۆکا ڕاپۆرتێ", ["English", "Kurdish", "Arabic"])
-    
-    submit_btn = st.form_submit_button("🚀 دروستکرنا فایلان")
-
-# ==========================================
-# کردارا دروستکرن و بەخشینا فایلان
-# ==========================================
-if submit_btn:
-    api_key = get_api_key()
+if st.button("🚀 دروستکرنا ڕاپۆرت و سمینارێ", type="primary"):
     if not api_key:
-        st.error("کلیلێ API نەهاتیە دیتن! پێدڤییە د بەشێ Streamlit Secrets دا بهێتە زێدەکرن.")
-    elif not topic.strip():
-        st.warning("تکایە ناڤێ بابەتێ بنڤیسە.")
+        st.error("تکایە دەستپێکێ کلیلا API بنڤیسە یان د بەشێ سێرڤەری دا دابنێ.")
+    elif not topic:
+        st.warning("تکایە ناڤێ بابەتێ ڕاپۆرتێ بنڤیسە.")
     else:
-        with st.spinner("ژیریا دەستکرد خەریکە سەرچاوە و دەقێ ئەکادیمی ئامادە دکەت..."):
-            prompt = f"""
-            You are an expert academic research assistant. Create a comprehensive, formal, and citation-backed report and presentation content for the topic: "{topic}".
-            Target Language: {lang}.
-            Student details: Name: {student_name}, Department: {dept}, Supervisor: {supervisor}.
-
-            Return ONLY a raw valid JSON object with NO markdown formatting, NO ```json backticks:
-            {{
-                "title": "Concise Academic Title",
-                "student_name": "{student_name}",
-                "department": "{dept}",
-                "supervisor": "{supervisor}",
-                "introduction": "Comprehensive academic introduction explaining context, importance, and objectives (at least 200 words).",
-                "sections": [
-                    {{"heading": "Title of Chapter/Section 1", "content": "In-depth academic discussion with technical details and analysis (at least 250 words)."}},
-                    {{"heading": "Title of Chapter/Section 2", "content": "Further in-depth analysis, methodology, or comparison (at least 250 words)."}},
-                    {{"heading": "Title of Chapter/Section 3", "content": "Challenges, future outlook, and implementations (at least 200 words)."}}
-                ],
-                "conclusion": "Thorough summary of findings and final academic takeaways (at least 150 words).",
-                "references": [
-                    "Author, A. (Year). Title of paper. Journal Name, Vol(Issue), pages.",
-                    "Author, B. (Year). Title of book or paper. Publisher/Conference."
-                ],
-                "slides": [
-                    {{"slide_title": "Overview & Objectives", "bullet_points": ["Key purpose of research", "Main research question", "Scope of study"]}},
-                    {{"slide_title": "Key Theoretical Concepts", "bullet_points": ["Core principle definition", "Critical mechanisms", "Industry standards"]}},
-                    {{"slide_title": "Findings & Analysis", "bullet_points": ["Primary quantitative/qualitative result", "Comparative performance", "Practical benefits"]}},
-                    {{"slide_title": "Future Scope & Recommendations", "bullet_points": ["Scalability and adoption", "Emerging challenges", "Strategic takeaway"]}}
-                ]
-            }}
-            """
+        with st.spinner("داتایێن زانستی دهێنە کۆمکرن و فایل بەرهەڤ دبن... چەند چرکەیان بگرە"):
             try:
-                raw_text = call_gemini(api_key, prompt)
-                clean_text = raw_text.replace("```json", "").replace("```", "").strip()
-                data = json.loads(clean_text)
+                data = generate_academic_content(topic, language, pages_count, api_key)
                 
-                # چێکرنا فایلان د مێمۆری دا
-                docx_file = generate_docx(data)
-                pptx_file = generate_pptx(data)
+                docx_file = create_docx(data)
+                pptx_file = create_pptx(data)
                 
-                st.success("✅ پیرۆزە! فایلێن تە ب سەرکەفتی ئامادە بوون.")
+                st.success("✅ ب سەرکەفتیانە ڕاپۆرت و سمینار هاتنە دروستکرن!")
                 
-                col_d1, col_d2 = st.columns(2)
-                with col_d1:
+                col1, col2 = st.columns(2)
+                with col1:
                     st.download_button(
-                        label="📄 داگرتنا ڕاپۆرتا Word (.docx)",
+                        label="📄 داگرتنا فایلا Word (.docx)",
                         data=docx_file,
-                        file_name=f"{topic[:20]}_Report.docx",
+                        file_name=f"{topic}_report.docx",
                         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                     )
-                with col_d2:
+                with col2:
                     st.download_button(
-                        label="📊 داگرتنا سمینارا PowerPoint (.pptx)",
+                        label="📊 داگرتنا فایلا PowerPoint (.pptx)",
                         data=pptx_file,
-                        file_name=f"{topic[:20]}_Seminar.pptx",
+                        file_name=f"{topic}_presentation.pptx",
                         mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
                     )
             except Exception as e:
