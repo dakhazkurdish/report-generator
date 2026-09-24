@@ -8,7 +8,7 @@ from docx import Document
 from docx.shared import Pt, Inches, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement, parse_xml
-from docx.oxml.ns import qn, nsdecls
+from docx.oxml.ns import qn
 
 from pptx import Presentation
 from pptx.util import Inches as PptxInches, Pt as PptxPt
@@ -18,17 +18,27 @@ from pptx.enum.shapes import MSO_SHAPE
 
 st.set_page_config(page_title="سیستەمێ زیرەک یێ دروستکرنا راپورت و سمیناران", page_icon="🎓", layout="wide", initial_sidebar_state="collapsed")
 
-# ڤەشارتنا هەمی ئایکۆنێن گیت‌هاب، پێنوس، هێدەر و فۆتەرێن ستریملیت دا کو کەس کۆدی نەبینیت
+# ڤەشارتنا هەمی مێنیو، دوگمە، لینکا گیت‌هاب و بارێن سێرڤەری ل دەف بکارهێنەران
 st.markdown("""
     <style>
-    #MainMenu {visibility: hidden !important;}
-    header {visibility: hidden !important;}
-    footer {visibility: hidden !important;}
-    .viewerBadge_container__1QSob {display: none !important;}
-    .styles_viewerBadge__1yB5G {display: none !important;}
-    [data-testid="stToolbar"] {visibility: hidden !important; display: none !important;}
-    [data-testid="stDecoration"] {visibility: hidden !important; display: none !important;}
-    [data-testid="stStatusWidget"] {visibility: hidden !important; display: none !important;}
+    /* ڤەشارتنا مێنیویێ سەرەکی، هێدەر و فۆتەر */
+    #MainMenu {visibility: hidden !important; display: none !important;}
+    header {visibility: hidden !important; display: none !important;}
+    footer {visibility: hidden !important; display: none !important;}
+    
+    /* ڤەشارتنا نیشانا پێنووسێ، دەستکاریکرن، باجی ستریملیت و لینکا گیت‌هابێ */
+    .viewerBadge_container__1QSob,
+    .styles_viewerBadge__1yB5G,
+    [data-testid="stToolbar"],
+    [data-testid="stDecoration"],
+    [data-testid="stStatusWidget"],
+    [data-testid="stManageAppButton"],
+    .manage-app-button,
+    button[title="View app in GitHub"],
+    a[href*="github.com"] {
+        visibility: hidden !important; 
+        display: none !important;
+    }
     
     .stApp { direction: rtl; text-align: right; }
     p, h1, h2, h3, label, div { text-align: right !important; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
@@ -60,7 +70,7 @@ enable_border = st.checkbox("🖼️ چوارچێوە (Border) بۆ لاپەڕێ
 # سێرچ بۆکسێ تێبینی و ڕێنماییێن تایبەت
 custom_notes = st.text_area(
     "💡 تێبینی یان داخوازیێن تایبەت (بتنێ فەرمانە، ناچیتە ناڤ ڕاپۆرتێ):",
-    placeholder="بۆ نموونە: گرنگیێ ب مێژوویا بابەتی بدە، نموونەیێن کرداری ل سەر عێراقێ بینە، ئاستێ زمانێ ئەکادیمی گەلەک بلند بیت...",
+    placeholder="بۆ نموونە: گرنگیێ ب مێژوویا بابەتی بدە، نموونەیێن کرداری بینە، ئاستێ زانستی گەلەک بلند بیت...",
     height=80
 )
 
@@ -127,7 +137,7 @@ def add_page_borders(section):
 
 # ئینانا لۆگۆیێ ئەکادیمی یان زانکۆیی
 def fetch_academic_logo(dept_name):
-    headers = {"User-Agent": "AcademicSlideGen/5.0"}
+    headers = {"User-Agent": "AcademicSlideGen/6.0"}
     if dept_name:
         try:
             clean_dept = urllib.parse.quote(dept_name.strip())
@@ -147,9 +157,10 @@ def fetch_academic_logo(dept_name):
 
 def fetch_slide_image(keyword, topic_context=""):
     search_terms = [keyword, topic_context]
-    headers = {"User-Agent": "AcademicSlideGen/5.0"}
+    headers = {"User-Agent": "AcademicSlideGen/6.0"}
     for term in search_terms:
-        if not term: continue
+        if not term: 
+            continue
         clean_kw = urllib.parse.quote(str(term).strip())
         try:
             search_url = f"https://en.wikipedia.org/w/api.php?action=query&format=json&generator=search&gsrsearch={clean_kw}&gsrlimit=3&prop=pageimages&pithumbsize=900"
@@ -311,8 +322,7 @@ def build_docx(data, student, dept, teacher, is_rtl, with_border=True):
     if with_border:
         add_page_borders(section_cover)
 
-    # 1. لاپەڕا سەرەکی (Cover Page)
-    # ئینانا لۆگۆیێ ئەکادیمی ئەگەر هەبیت
+    # لاپەڕا سەرەکی (Cover Page)
     logo_data = fetch_academic_logo(dept)
     if logo_data:
         p_logo = doc.add_paragraph()
@@ -385,7 +395,8 @@ def build_docx(data, student, dept, teacher, is_rtl, with_border=True):
         
         paras = sec.get('content', '').split("\n\n")
         for p_t in paras:
-            if not p_t.strip(): continue
+            if not p_t.strip(): 
+                continue
             p_sec = doc.add_paragraph()
             set_docx_rtl(p_sec, is_rtl)
             p_sec.paragraph_format.line_spacing = 1.3
@@ -454,14 +465,16 @@ def build_pptx(data, student, dept, teacher, is_rtl):
     p_t.font.bold = True
     p_t.font.color.rgb = ACCENT_GOLD
     p_t.alignment = PP_ALIGN.RIGHT if is_rtl else PP_ALIGN.LEFT
-    if is_rtl: p_t._pPr.set('rtl', '1')
+    if is_rtl: 
+        p_t._pPr.set('rtl', '1')
     
     p_sub = tf1.add_paragraph()
     p_sub.text = convert_numbers(f"{dept or 'پەیمانگەهـ / زانکۆ'}", is_rtl)
     p_sub.font.size = PptxPt(20)
     p_sub.font.color.rgb = WHITE
     p_sub.alignment = PP_ALIGN.RIGHT if is_rtl else PP_ALIGN.LEFT
-    if is_rtl: p_sub._pPr.set('rtl', '1')
+    if is_rtl: 
+        p_sub._pPr.set('rtl', '1')
     
     p_inf = tf1.add_paragraph()
     lbl_s = "قوتابی: " if is_rtl else "Student: "
@@ -470,7 +483,8 @@ def build_pptx(data, student, dept, teacher, is_rtl):
     p_inf.font.size = PptxPt(16)
     p_inf.font.color.rgb = LIGHT_GRAY
     p_inf.alignment = PP_ALIGN.RIGHT if is_rtl else PP_ALIGN.LEFT
-    if is_rtl: p_inf._pPr.set('rtl', '1')
+    if is_rtl: 
+        p_inf._pPr.set('rtl', '1')
     
     main_en_topic = data.get("main_en_topic", "")
     
@@ -490,7 +504,8 @@ def build_pptx(data, student, dept, teacher, is_rtl):
         t_para.font.bold = True
         t_para.font.color.rgb = ACCENT_GOLD
         t_para.alignment = PP_ALIGN.RIGHT if is_rtl else PP_ALIGN.LEFT
-        if is_rtl: t_para._pPr.set('rtl', '1')
+        if is_rtl: 
+            t_para._pPr.set('rtl', '1')
         
         img_query = s_item.get("image_search_query", "")
         img_data = fetch_slide_image(img_query, main_en_topic)
@@ -522,7 +537,8 @@ def build_pptx(data, student, dept, teacher, is_rtl):
             para.font.color.rgb = WHITE
             para.alignment = PP_ALIGN.RIGHT if is_rtl else PP_ALIGN.LEFT
             para.space_after = PptxPt(16)
-            if is_rtl: para._pPr.set('rtl', '1')
+            if is_rtl: 
+                para._pPr.set('rtl', '1')
             
         if img_data:
             try:
