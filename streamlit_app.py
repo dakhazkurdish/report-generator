@@ -137,7 +137,7 @@ def add_page_borders(section):
 
 # ئینانا لۆگۆیێ ئەکادیمی یان زانکۆیی
 def fetch_academic_logo(dept_name):
-    headers = {"User-Agent": "AcademicSlideGen/6.0"}
+    headers = {"User-Agent": "AcademicSlideGen/7.0"}
     if dept_name:
         try:
             clean_dept = urllib.parse.quote(dept_name.strip())
@@ -155,26 +155,48 @@ def fetch_academic_logo(dept_name):
             pass
     return None
 
+# ئینانا وێنەیێ ١٠٠٪ پەیوەندیدار و زانستی
 def fetch_slide_image(keyword, topic_context=""):
-    search_terms = [keyword, topic_context]
-    headers = {"User-Agent": "AcademicSlideGen/6.0"}
-    for term in search_terms:
-        if not term: 
-            continue
-        clean_kw = urllib.parse.quote(str(term).strip())
+    headers = {"User-Agent": "AcademicSlideGen/7.0 (educational-use)"}
+    terms_to_try = []
+    if keyword and keyword.strip():
+        terms_to_try.append(keyword.strip())
+    if topic_context and topic_context.strip() and topic_context.strip() not in terms_to_try:
+        terms_to_try.append(topic_context.strip())
+
+    # ١. لێگەڕیان د ناڤ فایلی وێنەیێن فەرمی دا (Wikimedia Commons Files)
+    for term in terms_to_try:
+        clean_kw = urllib.parse.quote(term)
         try:
-            search_url = f"https://en.wikipedia.org/w/api.php?action=query&format=json&generator=search&gsrsearch={clean_kw}&gsrlimit=3&prop=pageimages&pithumbsize=900"
-            r = requests.get(search_url, headers=headers, timeout=5)
+            commons_url = f"https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch={clean_kw}&gsrnamespace=6&gsrlimit=8&prop=imageinfo&iiprop=url&iiurlwidth=800&format=json"
+            r = requests.get(commons_url, headers=headers, timeout=5)
             if r.status_code == 200:
                 pages = r.json().get("query", {}).get("pages", {})
-                for _, p_info in pages.items():
-                    thumb = p_info.get("thumbnail", {}).get("source")
-                    if thumb:
-                        img_r = requests.get(thumb, headers=headers, timeout=5)
-                        if img_r.status_code == 200 and len(img_r.content) > 3000:
-                            return io.BytesIO(img_r.content)
+                for _, page in pages.items():
+                    title = page.get("title", "").lower()
+                    # دوورکەفتن ژ نەخشە، ئایکۆن، فایلی دەنگی یان لۆگۆیان
+                    if any(bad in title for bad in [".svg", ".ogg", ".pdf", ".tif", ".webm", "flag", "icon", "logo", "map", "coat_of_arms"]):
+                        continue
+                    img_info = page.get("imageinfo", [{}])[0]
+                    thumb_url = img_info.get("thumburl") or img_info.get("url")
+                    if thumb_url and (thumb_url.endswith(".jpg") or thumb_url.endswith(".png") or thumb_url.endswith(".jpeg") or "thumb" in thumb_url):
+                        img_res = requests.get(thumb_url, headers=headers, timeout=6)
+                        if img_res.status_code == 200 and len(img_res.content) > 6000:
+                            return io.BytesIO(img_res.content)
         except Exception:
             continue
+
+    # ٢. ئەگەر وێنەیێ زانستی یێ ڕاستەوخۆ نەهات، دروستکرنا وێنەیەکی ڕاستەقینە یێ ١٠٠٪ پەیوەندیدار ب بابەتی
+    fallback_prompt = keyword or topic_context or "university scientific research"
+    try:
+        clean_prompt = urllib.parse.quote(f"high quality realistic photo of {fallback_prompt}, academic presentation slide, sharp focus, professional")
+        poll_url = f"https://image.pollinations.ai/prompt/{clean_prompt}?width=800&height=500&nologo=true"
+        r = requests.get(poll_url, timeout=7)
+        if r.status_code == 200 and len(r.content) > 8000:
+            return io.BytesIO(r.content)
+    except Exception:
+        pass
+
     return None
 
 def call_gemini(prompt, key, as_json=True):
@@ -227,13 +249,13 @@ def generate_multi_step_report(topic, lang, pages, student, dept, teacher, notes
 
     CRITICAL RULES:
     1. Presentation slides MUST be 100% written in {lang}. Do not write bullet points in English unless target language is English.
-    2. For each slide, provide an exact, highly specific English query for `image_search_query` that specifically describes the topic of that slide.
+    2. For each slide, provide an exact 2-to-3 simple English words query for `image_search_query` that specifies a realistic physical object or visual scene (e.g. for computer networking: "ethernet cables servers", for solar energy: "solar photovoltaic panels", for medicine: "doctor with stethoscope", for civil engineering: "bridge construction concrete"). Do NOT write abstract words or long sentences.
 
     Return strictly a JSON object:
     {{
         "title": "Full Academic Title in {lang}",
         "abstract": "Extensive abstract in {lang} (200-300 words)",
-        "english_main_topic": "English translation of the main topic for image searching",
+        "english_main_topic": "Simple 2-word English translation of the main topic for image searching",
         "section_titles": [
             "Section Title 1",
             "Section Title 2"
@@ -241,7 +263,7 @@ def generate_multi_step_report(topic, lang, pages, student, dept, teacher, notes
         "slides": [
             {{
                 "slide_title": "Slide Title in {lang}",
-                "image_search_query": "specific english search terms for exact image",
+                "image_search_query": "2 to 3 simple english words",
                 "bullet_points": ["Point 1 in {lang}", "Point 2 in {lang}", "Point 3 in {lang}"]
             }}
         ]
