@@ -28,7 +28,7 @@ language = st.selectbox("زمانێ نڤیسینێ هەڵبژێرە:", ["کور�
 pages_count = st.slider("ژمارا لاپەڕێن پێدڤی بۆ ڕاپۆرتێ:", min_value=2, max_value=8, value=3)
 
 def generate_academic_content(topic, lang, pages, key):
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={key}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key={key}"
     headers = {"Content-Type": "application/json"}
     
     prompt = f"""
