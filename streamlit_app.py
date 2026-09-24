@@ -44,6 +44,13 @@ with st.container():
         topic = st.text_input("📝 بابەتێ سەرەکی یێ ڕاپۆرتێ:")
         pages_count = st.slider("📄 ژمارا لاپەڕێن پێدڤی بۆ ڕاپۆرتێ:", min_value=3, max_value=25, value=12)
 
+# سێرچ بۆکسێ تێبینی و ڕێنماییێن تایبەت
+custom_notes = st.text_area(
+    "💡 تێبینی یان داخوازیێن تایبەت (ئارەزوومەندانە):",
+    placeholder="بۆ نموونە: گرنگیێ ب مێژوویا بابەتی بدە، شیکارکرنا ئابووری زێدە بکە، ل سەر وەلاتێ عێراقێ باس بکە...",
+    height=80
+)
+
 def convert_numbers(text, is_rtl):
     if not is_rtl or not text:
         return text
@@ -71,30 +78,28 @@ def format_run(run, font_name="Calibri", size_pt=14, bold=False, color_rgb=(0, 0
         rtl.set(qn('w:val'), '1')
         rPr.append(rtl)
 
-def fetch_slide_image(keyword, seed=1):
-    clean_kw = urllib.parse.quote(str(keyword).strip() or "education")
-    try:
-        search_url = f"https://en.wikipedia.org/w/api.php?action=query&format=json&generator=search&gsrsearch={clean_kw}&gsrlimit=1&prop=pageimages&pithumbsize=800"
-        headers = {"User-Agent": "AcademicSlideGen/3.0"}
-        r = requests.get(search_url, headers=headers, timeout=4)
-        if r.status_code == 200:
-            pages = r.json().get("query", {}).get("pages", {})
-            for _, p_info in pages.items():
-                thumb = p_info.get("thumbnail", {}).get("source")
-                if thumb:
-                    img_r = requests.get(thumb, headers=headers, timeout=4)
-                    if img_r.status_code == 200 and len(img_r.content) > 2000:
-                        return io.BytesIO(img_r.content)
-    except Exception:
-        pass
+# ئینانا وێنەیێ زانستی یێ ڕاستەقینە و گرێدای ب بابەتی ڤە بتنێ
+def fetch_slide_image(keyword, topic_context=""):
+    search_terms = [keyword, topic_context]
+    headers = {"User-Agent": "AcademicSlideGen/4.0"}
     
-    try:
-        fallback_url = f"https://picsum.photos/seed/{abs(hash(clean_kw)) % 1000 + seed}/800/600"
-        fb_r = requests.get(fallback_url, timeout=4)
-        if fb_r.status_code == 200:
-            return io.BytesIO(fb_r.content)
-    except Exception:
-        return None
+    for term in search_terms:
+        if not term:
+            continue
+        clean_kw = urllib.parse.quote(str(term).strip())
+        try:
+            search_url = f"https://en.wikipedia.org/w/api.php?action=query&format=json&generator=search&gsrsearch={clean_kw}&gsrlimit=3&prop=pageimages&pithumbsize=900"
+            r = requests.get(search_url, headers=headers, timeout=5)
+            if r.status_code == 200:
+                pages = r.json().get("query", {}).get("pages", {})
+                for _, p_info in pages.items():
+                    thumb = p_info.get("thumbnail", {}).get("source")
+                    if thumb:
+                        img_r = requests.get(thumb, headers=headers, timeout=5)
+                        if img_r.status_code == 200 and len(img_r.content) > 3000:
+                            return io.BytesIO(img_r.content)
+        except Exception:
+            continue
     return None
 
 def call_gemini(prompt, key, as_json=True):
@@ -122,35 +127,39 @@ def call_gemini(prompt, key, as_json=True):
             last_error = str(e)
     raise Exception(f"API Error: {last_error}")
 
-def generate_multi_step_report(topic, lang, pages, student, dept, teacher, key, progress_bar, status_text):
+def generate_multi_step_report(topic, lang, pages, student, dept, teacher, notes, key, progress_bar, status_text):
     num_sections = max(4, pages - 2)
     
-    status_text.write("قۆناغا ١: پلان و نەخشەڕێیا ڕاپۆرتێ و سمینارێ دهێتە کێشان...")
+    notes_prompt_part = f"\nUSER'S SPECIAL INSTRUCTIONS & NOTES: \"{notes}\"\nYou MUST strictly follow and satisfy these user instructions throughout the research." if notes.strip() else ""
+    
+    status_text.write("قۆناغا ١: پلان و نەخشەڕێیا ڕاپۆرتێ و سمینارێ ل دویڤ تێبینیێن تە دهێتە دارشتن...")
     progress_bar.progress(10)
     
     plan_prompt = f"""
-    You are a university academic supervisor.
-    Create a detailed plan for an extensive {pages}-page academic research and university presentation on: "{topic}".
-    Language to write presentation slides and headings: {lang}.
+    You are an esteemed university professor and thesis advisor.
+    Create a comprehensive academic research outline and presentation slides for the topic: "{topic}".
+    Target Language: {lang}.
     Student: "{student}", Department: "{dept}", Supervisor: "{teacher}".
     Required Sections count: {num_sections}.
+    {notes_prompt_part}
 
-    CRITICAL RULE FOR PRESENTATION:
-    - ALL `slide_title` and `bullet_points` MUST BE WRITTEN IN {lang}. DO NOT WRITE THEM IN ENGLISH unless the requested language is English.
-    - `image_keyword` must be an English keyword for image retrieval.
+    CRITICAL RULES:
+    1. Presentation slides MUST be 100% written in {lang}. Do not write bullet points in English unless target language is English.
+    2. For each slide, provide an exact, highly specific English query for `image_search_query` that specifically describes the topic of that slide (e.g. for computer networking slide: "computer network switch router cables", for solar energy: "photovoltaic solar panel installation").
 
     Return strictly a JSON object:
     {{
         "title": "Full Academic Title in {lang}",
         "abstract": "Extensive abstract in {lang} (200-300 words)",
+        "english_main_topic": "English translation of the main topic for image searching",
         "section_titles": [
-            "Title of section 1",
-            "Title of section 2"
+            "Section Title 1",
+            "Section Title 2"
         ],
         "slides": [
             {{
                 "slide_title": "Slide Title in {lang}",
-                "image_keyword": "english keyword for image",
+                "image_search_query": "specific english search terms for exact image",
                 "bullet_points": ["Point 1 in {lang}", "Point 2 in {lang}", "Point 3 in {lang}"]
             }}
         ]
@@ -161,6 +170,7 @@ def generate_multi_step_report(topic, lang, pages, student, dept, teacher, key, 
     sections = []
     sec_titles = plan.get("section_titles", [])
     total_secs = len(sec_titles)
+    main_en_topic = plan.get("english_main_topic", topic)
     
     for i, s_title in enumerate(sec_titles):
         status_text.write(f"قۆناغا ٢: نڤیسینا بەرفرەهـ یا تەوەرێ ({i+1} ژ {total_secs}): {s_title}...")
@@ -171,6 +181,7 @@ def generate_multi_step_report(topic, lang, pages, student, dept, teacher, key, 
         You are writing Section {i+1} of a comprehensive academic thesis on the topic: "{topic}".
         Language: {lang}.
         Section Title: "{s_title}".
+        {notes_prompt_part}
         
         Write an EXTREMELY IN-DEPTH, MULTI-PARAGRAPH scholarly text for this section alone.
         DO NOT summarize. Include historical depth, scientific definitions, analytical breakdowns, practical examples, and real-world implications.
@@ -189,6 +200,7 @@ def generate_multi_step_report(topic, lang, pages, student, dept, teacher, key, 
     ending_prompt = f"""
     Write a formal conclusion and APA academic references for the research "{topic}".
     Language: {lang}.
+    {notes_prompt_part}
     Return strictly a JSON object:
     {{
         "conclusion": "Detailed multi-paragraph conclusion in {lang}",
@@ -197,8 +209,7 @@ def generate_multi_step_report(topic, lang, pages, student, dept, teacher, key, 
             "Full APA Reference 2",
             "Full APA Reference 3",
             "Full APA Reference 4",
-            "Full APA Reference 5",
-            "Full APA Reference 6"
+            "Full APA Reference 5"
         ]
     }}
     """
@@ -213,7 +224,8 @@ def generate_multi_step_report(topic, lang, pages, student, dept, teacher, key, 
         "sections": sections,
         "conclusion": ending.get("conclusion", ""),
         "references": ending.get("references", []),
-        "slides": plan.get("slides", [])
+        "slides": plan.get("slides", []),
+        "main_en_topic": main_en_topic
     }
 
 def build_docx(data, student, dept, teacher, is_rtl):
@@ -358,6 +370,8 @@ def build_pptx(data, student, dept, teacher, is_rtl):
     p_inf.alignment = PP_ALIGN.RIGHT if is_rtl else PP_ALIGN.LEFT
     if is_rtl: p_inf._pPr.set('rtl', '1')
     
+    main_en_topic = data.get("main_en_topic", "")
+    
     # سلایدێن ناڤەرۆکێ
     for idx_s, s_item in enumerate(data.get("slides", [])):
         sl = prs.slides.add_slide(blank_layout)
@@ -376,12 +390,20 @@ def build_pptx(data, student, dept, teacher, is_rtl):
         t_para.alignment = PP_ALIGN.RIGHT if is_rtl else PP_ALIGN.LEFT
         if is_rtl: t_para._pPr.set('rtl', '1')
         
-        if is_rtl:
-            text_left, text_width = PptxInches(6.8), PptxInches(5.5)
-            img_left, img_top, img_width = PptxInches(1.0), PptxInches(1.8), PptxInches(5.2)
+        # لێگەڕیان ل وێنەیێ تایبەت ب ڤی بابەتی
+        img_query = s_item.get("image_search_query", "")
+        img_data = fetch_slide_image(img_query, main_en_topic)
+        
+        # ئەگەر وێنەیێ دروست هەبوو، سلاید ببیتە دوو بەش؛ ئەگەر نەبوو، دەق بەرفرەهـ بیت تا وێنەیێ ساختە نەیێت
+        if img_data:
+            if is_rtl:
+                text_left, text_width = PptxInches(6.8), PptxInches(5.5)
+                img_left, img_top, img_width = PptxInches(1.0), PptxInches(1.8), PptxInches(5.2)
+            else:
+                text_left, text_width = PptxInches(1.0), PptxInches(5.5)
+                img_left, img_top, img_width = PptxInches(7.0), PptxInches(1.8), PptxInches(5.2)
         else:
-            text_left, text_width = PptxInches(1.0), PptxInches(5.5)
-            img_left, img_top, img_width = PptxInches(7.0), PptxInches(1.8), PptxInches(5.2)
+            text_left, text_width = PptxInches(1.5), PptxInches(10.333)
             
         card = sl.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, text_left, PptxInches(1.8), text_width, PptxInches(5.0))
         card.fill.solid()
@@ -389,21 +411,19 @@ def build_pptx(data, student, dept, teacher, is_rtl):
         card.line.color.rgb = ACCENT_GOLD
         card.line.width = PptxPt(1)
         
-        c_box = sl.shapes.add_textbox(text_left + PptxInches(0.2), PptxInches(2.0), text_width - PptxInches(0.4), PptxInches(4.6))
+        c_box = sl.shapes.add_textbox(text_left + PptxInches(0.3), PptxInches(2.0), text_width - PptxInches(0.6), PptxInches(4.6))
         c_frame = c_box.text_frame
         c_frame.word_wrap = True
         
         for idx, pt in enumerate(s_item.get("bullet_points", [])):
             para = c_frame.paragraphs[0] if idx == 0 else c_frame.add_paragraph()
             para.text = f"•  {convert_numbers(pt, is_rtl)}"
-            para.font.size = PptxPt(17)
+            para.font.size = PptxPt(18)
             para.font.color.rgb = WHITE
             para.alignment = PP_ALIGN.RIGHT if is_rtl else PP_ALIGN.LEFT
             para.space_after = PptxPt(16)
             if is_rtl: para._pPr.set('rtl', '1')
             
-        img_keyword = s_item.get("image_keyword", "")
-        img_data = fetch_slide_image(img_keyword, seed=idx_s)
         if img_data:
             try:
                 sl.shapes.add_picture(img_data, img_left, img_top, width=img_width)
@@ -446,7 +466,7 @@ if st.button("🚀 دروستکرنا ڕاپۆرت و سمینارێ", type="pri
         progress_bar = st.progress(0)
         status_text = st.empty()
         try:
-            content = generate_multi_step_report(topic, language, pages_count, student_name, department, teacher_name, api_key, progress_bar, status_text)
+            content = generate_multi_step_report(topic, language, pages_count, student_name, department, teacher_name, custom_notes, api_key, progress_bar, status_text)
             
             st.session_state["docx_file"] = build_docx(content, student_name, department, teacher_name, is_rtl_lang).getvalue()
             st.session_state["pptx_file"] = build_pptx(content, student_name, department, teacher_name, is_rtl_lang).getvalue()
@@ -456,7 +476,7 @@ if st.button("🚀 دروستکرنا ڕاپۆرت و سمینارێ", type="pri
             
             progress_bar.empty()
             status_text.empty()
-            st.success("✅ ڕاپۆرتا بەرفرەهـ و سمینارا کوردی ب سەرکەفتیانە هاتنە دروستکرن!")
+            st.success("✅ ڕاپۆرت و سمینار ل دویڤ تێبینیێن تە ب سەرکەفتیانە هاتنە دروستکرن!")
         except Exception as e:
             progress_bar.empty()
             status_text.empty()
@@ -474,7 +494,7 @@ if st.session_state.get("generated", False):
         )
     with col_d2:
         st.download_button(
-            label="📊 داگرتنا فایلا PowerPoint (سلایدێن کوردی دگەل وێنەیان)",
+            label="📊 داگرتنا فایلا PowerPoint (سلایدێن کوردی دگەل وێنەیێن تایبەت)",
             data=st.session_state["pptx_file"],
             file_name=f"{st.session_state['topic_name']}_presentation.pptx",
             mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
@@ -482,5 +502,5 @@ if st.session_state.get("generated", False):
     
     st.markdown("---")
     st.markdown("### 📋 دەقێ ڕاپۆرتێ بۆ کۆپیکردنا ڕاستەوخۆ:")
-    st.caption("دشێی ڤی دەقی ڕاستەوخۆ دیاربکەی (Ctrl+A پاشان Ctrl+C) و پەیست بکەیە ناڤ وۆردێ خو بێی داگرتن:")
+    st.caption("دشێی ڤی دەقی دیاربکەی (Ctrl+A پاشان Ctrl+C) و پەیست بکەیە ناڤ وۆردێ خو بێی داگرتن:")
     st.text_area("", value=st.session_state["plain_text"], height=400)
