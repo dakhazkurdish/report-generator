@@ -28,7 +28,8 @@ language = st.selectbox("زمانێ نڤیسینێ هەڵبژێرە:", ["کور�
 pages_count = st.slider("ژمارا لاپەڕێن پێدڤی بۆ ڕاپۆرتێ:", min_value=2, max_value=8, value=3)
 
 def generate_academic_content(topic, lang, pages, key):
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key={key}"
+    # لیستا مۆدێلان: ئەگەر ئێک قەرەباڵغ بوو (503)، خۆکارانە دچیتە سەر یێ دویڤدا
+    candidate_models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
     headers = {"Content-Type": "application/json"}
     
     prompt = f"""
@@ -56,13 +57,23 @@ def generate_academic_content(topic, lang, pages, key):
         "generationConfig": {"response_mime_type": "application/json"}
     }
     
-    response = requests.post(url, headers=headers, json=payload)
-    if response.status_code != 200:
-        raise Exception(f"API Error: {response.text}")
-    
-    result = response.json()
-    text_content = result["candidates"][0]["content"]["parts"][0]["text"]
-    return json.loads(text_content)
+    last_error = ""
+    for model_name in candidate_models:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={key}"
+        try:
+            response = requests.post(url, headers=headers, json=payload, timeout=60)
+            if response.status_code == 200:
+                result = response.json()
+                text_content = result["candidates"][0]["content"]["parts"][0]["text"]
+                return json.loads(text_content)
+            else:
+                last_error = response.text
+                continue
+        except Exception as e:
+            last_error = str(e)
+            continue
+            
+    raise Exception(f"API Error: {last_error}")
 
 def create_docx(data):
     doc = Document()
