@@ -3,10 +3,12 @@ import requests
 import json
 import io
 import urllib.parse
+import re
 
 from docx import Document
 from docx.shared import Pt, Inches, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.oxml import OxmlElement, parse_xml
 from docx.oxml.ns import qn
 
@@ -16,17 +18,20 @@ from pptx.dml.color import RGBColor as PptxRGBColor
 from pptx.enum.text import PP_ALIGN
 from pptx.enum.shapes import MSO_SHAPE
 
-st.set_page_config(page_title="سیستەمێ زیرەک یێ دروستکرنا راپورت و سمیناران", page_icon="🎓", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(
+    page_title="سیستەمێ زیرەک یێ دروستکرنا راپورت و سمیناران", 
+    page_icon="🎓", 
+    layout="wide", 
+    initial_sidebar_state="collapsed"
+)
 
 # ڤەشارتنا هەمی مێنیو، دوگمە، لینکا گیت‌هاب و بارێن سێرڤەری ل دەف بکارهێنەران
 st.markdown("""
     <style>
-    /* ڤەشارتنا مێنیویێ سەرەکی، هێدەر و فۆتەر */
     #MainMenu {visibility: hidden !important; display: none !important;}
     header {visibility: hidden !important; display: none !important;}
     footer {visibility: hidden !important; display: none !important;}
     
-    /* ڤەشارتنا نیشانا پێنووسێ، دەستکاریکرن، باجی ستریملیت و لینکا گیت‌هابێ */
     .viewerBadge_container__1QSob,
     .styles_viewerBadge__1yB5G,
     [data-testid="stToolbar"],
@@ -49,9 +54,10 @@ st.markdown("""
 
 st.title("سیستەمێ زیرەک یێ دروستکرنا راپورت و سمیناران")
 
-api_key = st.secrets.get("GEMINI_API_KEY", "")
-if not api_key:
-    api_key = st.text_input("کلیلا Gemini API لێرە بنڤیسە:", type="password")
+# وەرگرتنا کلیل یان کلیلێن جیاواز
+raw_api_key = st.secrets.get("GEMINI_API_KEY", "")
+if not raw_api_key:
+    raw_api_key = st.text_input("کلیلا Gemini API لێرە بنڤیسە (دشێی چەند کلیلان ب کۆما جودا بکەی):", type="password")
 
 with st.container():
     col1, col2 = st.columns(2)
@@ -59,15 +65,26 @@ with st.container():
         student_name = st.text_input("👤 ناڤێ قوتابی:")
         department = st.text_input("🏛️ پەیمانگەهـ یان کۆلێژ / پشک:")
         language = st.selectbox("🌐 زمانێ نڤیسینێ:", ["کوردی (بادینی)", "کوردی (سۆرانی)", "العربية", "English"])
+        academic_level = st.selectbox(
+            "🎓 ئاستێ ئەکادیمی یێ لێکۆڵینەوەیێ:",
+            [
+                "زانکۆ (بەکالۆریۆس - ستاندارد و پڕ زانیاری)",
+                "پەیمانگەهـ (دبلۆم - ڕوون و کرداری)",
+                "خاندنا باڵا (ماستەر و دکتۆرا - زۆر قووڵ، تیۆری و ڕەخنەگرانە)"
+            ]
+        )
     with col2:
         teacher_name = st.text_input("👨‍🏫 ناڤێ مامۆستایێ بابەتی:")
         topic = st.text_input("📝 بابەتێ سەرەکی یێ ڕاپۆرتێ:")
         pages_count = st.slider("📄 ژمارا لاپەڕێن پێدڤی بۆ ڕاپۆرتێ:", min_value=3, max_value=25, value=12)
+        slides_count = st.slider("📊 ژمارا سلایدێن پاوەرپۆینتێ (Seminar):", min_value=5, max_value=20, value=8)
 
-# بژاردەیا چوارچێوەیێ ڕاپۆرتێ
-enable_border = st.checkbox("🖼️ چوارچێوە (Border) بۆ لاپەڕێن ڕاپۆرتا Word بهێتە دانان؟", value=True)
+col_sub1, col_sub2 = st.columns(2)
+with col_sub1:
+    enable_border = st.checkbox("🖼️ چوارچێوە (Border) بۆ لاپەڕێن ڕاپۆرتا Word بهێتە دانان؟", value=True)
+with col_sub2:
+    uploaded_logo = st.file_uploader("🏛️ بارکرنا لۆگۆیێ فەرمی یێ زانکۆیێ (ئارەزوومەندانە):", type=["png", "jpg", "jpeg"])
 
-# سێرچ بۆکسێ تێبینی و ڕێنماییێن تایبەت
 custom_notes = st.text_area(
     "💡 تێبینی یان داخوازیێن تایبەت (بتنێ فەرمانە، ناچیتە ناڤ ڕاپۆرتێ):",
     placeholder="بۆ نموونە: گرنگیێ ب مێژوویا بابەتی بدە، نموونەیێن کرداری بینە، ئاستێ زانستی گەلەک بلند بیت...",
@@ -101,7 +118,6 @@ def format_run(run, font_name="Calibri", size_pt=14, bold=False, color_rgb=(0, 0
         rtl.set(qn('w:val'), '1')
         rPr.append(rtl)
 
-# زێدەکرنا ژمارا لاپەڕەی د بنی دا
 def add_page_number_to_section(section, is_rtl):
     footer = section.footer
     p = footer.paragraphs[0]
@@ -122,7 +138,6 @@ def add_page_number_to_section(section, is_rtl):
     run._r.append(fldChar3)
     format_run(run, size_pt=10, bold=False, color_rgb=(120, 130, 140), is_rtl=is_rtl)
 
-# زێدەکرنا چوارچێوەیێ لاپەڕەی (Page Border)
 def add_page_borders(section):
     sectPr = section._sectPr
     pgBorders = parse_xml(r'''
@@ -135,9 +150,8 @@ def add_page_borders(section):
     ''')
     sectPr.append(pgBorders)
 
-# ئینانا لۆگۆیێ ئەکادیمی یان زانکۆیی
 def fetch_academic_logo(dept_name):
-    headers = {"User-Agent": "AcademicSlideGen/7.0"}
+    headers = {"User-Agent": "AcademicSlideGen/8.0"}
     if dept_name:
         try:
             clean_dept = urllib.parse.quote(dept_name.strip())
@@ -155,16 +169,14 @@ def fetch_academic_logo(dept_name):
             pass
     return None
 
-# ئینانا وێنەیێ ١٠٠٪ پەیوەندیدار و زانستی
 def fetch_slide_image(keyword, topic_context=""):
-    headers = {"User-Agent": "AcademicSlideGen/7.0 (educational-use)"}
+    headers = {"User-Agent": "AcademicSlideGen/8.0 (educational-use)"}
     terms_to_try = []
     if keyword and keyword.strip():
         terms_to_try.append(keyword.strip())
     if topic_context and topic_context.strip() and topic_context.strip() not in terms_to_try:
         terms_to_try.append(topic_context.strip())
 
-    # ١. لێگەڕیان د ناڤ فایلی وێنەیێن فەرمی دا (Wikimedia Commons Files)
     for term in terms_to_try:
         clean_kw = urllib.parse.quote(term)
         try:
@@ -174,7 +186,6 @@ def fetch_slide_image(keyword, topic_context=""):
                 pages = r.json().get("query", {}).get("pages", {})
                 for _, page in pages.items():
                     title = page.get("title", "").lower()
-                    # دوورکەفتن ژ نەخشە، ئایکۆن، فایلی دەنگی یان لۆگۆیان
                     if any(bad in title for bad in [".svg", ".ogg", ".pdf", ".tif", ".webm", "flag", "icon", "logo", "map", "coat_of_arms"]):
                         continue
                     img_info = page.get("imageinfo", [{}])[0]
@@ -186,7 +197,6 @@ def fetch_slide_image(keyword, topic_context=""):
         except Exception:
             continue
 
-    # ٢. ئەگەر وێنەیێ زانستی یێ ڕاستەوخۆ نەهات، دروستکرنا وێنەیەکی ڕاستەقینە یێ ١٠٠٪ پەیوەندیدار ب بابەتی
     fallback_prompt = keyword or topic_context or "university scientific research"
     try:
         clean_prompt = urllib.parse.quote(f"high quality realistic photo of {fallback_prompt}, academic presentation slide, sharp focus, professional")
@@ -199,7 +209,10 @@ def fetch_slide_image(keyword, topic_context=""):
 
     return None
 
-def call_gemini(prompt, key, as_json=True):
+def parse_keys(raw_input):
+    return [k.strip() for k in re.split(r'[,;\s]+', raw_input) if k.strip()]
+
+def call_gemini(prompt, keys_list, as_json=True):
     candidate_models = ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash"]
     headers = {"Content-Type": "application/json"}
     payload = {
@@ -209,22 +222,28 @@ def call_gemini(prompt, key, as_json=True):
             "maxOutputTokens": 8192
         }
     }
+    
     last_error = ""
-    for model_name in candidate_models:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={key}"
-        try:
-            res = requests.post(url, headers=headers, json=payload, timeout=90)
-            if res.status_code == 200:
-                result = res.json()
-                text_content = result["candidates"][0]["content"]["parts"][0]["text"]
-                return json.loads(text_content) if as_json else text_content
-            else:
-                last_error = res.text
-        except Exception as e:
-            last_error = str(e)
+    # گەڕیان بە ناڤ هەمی کلیلان و مۆدێلان دا بۆ ڕێگری ل وەستان یان سنوورداربوون
+    for current_key in keys_list:
+        for model_name in candidate_models:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={current_key}"
+            try:
+                res = requests.post(url, headers=headers, json=payload, timeout=90)
+                if res.status_code == 200:
+                    result = res.json()
+                    text_content = result["candidates"][0]["content"]["parts"][0]["text"]
+                    return json.loads(text_content) if as_json else text_content
+                elif res.status_code in [429, 403, 503]:
+                    last_error = f"{res.status_code}: {res.text}"
+                    break
+                else:
+                    last_error = res.text
+            except Exception as e:
+                last_error = str(e)
     raise Exception(f"API Error: {last_error}")
 
-def generate_multi_step_report(topic, lang, pages, student, dept, teacher, notes, key, progress_bar, status_text):
+def generate_multi_step_report(topic, lang, pages, student, dept, teacher, notes, academic_lvl, s_count, keys_list, progress_bar, status_text):
     num_sections = max(4, pages - 2)
     
     notes_prompt_part = ""
@@ -233,23 +252,26 @@ def generate_multi_step_report(topic, lang, pages, student, dept, teacher, notes
         CRITICAL OPERATIONAL INSTRUCTIONS FROM USER:
         "{notes.strip()}"
         Apply these instructions into the content and focus of the research SILENTLY. 
-        DO NOT quote, mention, or print these instructions or phrases anywhere in the generated output text.
+        DO NOT quote, mention, or print these instructions anywhere in the generated output text.
         """
         
-    status_text.write("قۆناغا ١: پلان و نەخشەڕێیا ڕاپۆرتێ و سمینارێ دهێتە دارشتن...")
+    status_text.write("قۆناغا ١: پلان و نەخشەڕێیا پێڕست و سمینارێ دهێتە دارشتن...")
     progress_bar.progress(10)
     
     plan_prompt = f"""
-    You are an esteemed university professor and thesis advisor.
+    You are an esteemed university professor and thesis committee chair.
     Create a comprehensive academic research outline and presentation slides for the topic: "{topic}".
     Target Language: {lang}.
     Student: "{student}", Department: "{dept}", Supervisor: "{teacher}".
+    Target Academic Level: {academic_lvl}.
     Required Sections count: {num_sections}.
+    Required Presentation Slides count: {s_count}.
     {notes_prompt_part}
 
     CRITICAL RULES:
     1. Presentation slides MUST be 100% written in {lang}. Do not write bullet points in English unless target language is English.
-    2. For each slide, provide an exact 2-to-3 simple English words query for `image_search_query` that specifies a realistic physical object or visual scene (e.g. for computer networking: "ethernet cables servers", for solar energy: "solar photovoltaic panels", for medicine: "doctor with stethoscope", for civil engineering: "bridge construction concrete"). Do NOT write abstract words or long sentences.
+    2. Provide exactly {s_count} slides inside the "slides" array.
+    3. For each slide, provide an exact 2-to-3 simple English words query for `image_search_query` that specifies a realistic physical object or visual scene.
 
     Return strictly a JSON object:
     {{
@@ -269,7 +291,7 @@ def generate_multi_step_report(topic, lang, pages, student, dept, teacher, notes
         ]
     }}
     """
-    plan = call_gemini(plan_prompt, key, as_json=True)
+    plan = call_gemini(plan_prompt, keys_list, as_json=True)
     
     sections = []
     sec_titles = plan.get("section_titles", [])
@@ -284,15 +306,16 @@ def generate_multi_step_report(topic, lang, pages, student, dept, teacher, notes
         sec_prompt = f"""
         You are writing Section {i+1} of a comprehensive academic thesis on the topic: "{topic}".
         Language: {lang}.
+        Academic Rigor Level: {academic_lvl}.
         Section Title: "{s_title}".
         {notes_prompt_part}
         
-        Write an EXTREMELY IN-DEPTH, MULTI-PARAGRAPH scholarly text for this section alone.
+        Write an EXTREMELY IN-DEPTH, MULTI-PARAGRAPH scholarly text for this section alone according to {academic_lvl}.
         DO NOT summarize. Include historical depth, scientific definitions, analytical breakdowns, practical examples, and real-world implications.
         Length: Write at least 4 to 6 large paragraphs for this section.
         Return ONLY plain text for this section's content.
         """
-        sec_content = call_gemini(sec_prompt, key, as_json=False)
+        sec_content = call_gemini(sec_prompt, keys_list, as_json=False)
         sections.append({
             "heading": s_title,
             "content": sec_content.strip()
@@ -304,6 +327,7 @@ def generate_multi_step_report(topic, lang, pages, student, dept, teacher, notes
     ending_prompt = f"""
     Write a formal conclusion and APA academic references for the research "{topic}".
     Language: {lang}.
+    Academic Level: {academic_lvl}.
     {notes_prompt_part}
     Return strictly a JSON object:
     {{
@@ -317,7 +341,7 @@ def generate_multi_step_report(topic, lang, pages, student, dept, teacher, notes
         ]
     }}
     """
-    ending = call_gemini(ending_prompt, key, as_json=True)
+    ending = call_gemini(ending_prompt, keys_list, as_json=True)
     
     progress_bar.progress(100)
     status_text.write("فایلێن Word و PowerPoint ب شێوەیێ ستاندارد ئامادە دبن...")
@@ -332,7 +356,7 @@ def generate_multi_step_report(topic, lang, pages, student, dept, teacher, notes
         "main_en_topic": main_en_topic
     }
 
-def build_docx(data, student, dept, teacher, is_rtl, with_border=True):
+def build_docx(data, student, dept, teacher, is_rtl, with_border=True, user_logo_bytes=None, academic_lvl=""):
     doc = Document()
     
     section_cover = doc.sections[0]
@@ -344,13 +368,13 @@ def build_docx(data, student, dept, teacher, is_rtl, with_border=True):
     if with_border:
         add_page_borders(section_cover)
 
-    # لاپەڕا سەرەکی (Cover Page)
-    logo_data = fetch_academic_logo(dept)
+    # ١. لاپەڕا سەرەکی (Cover Page)
+    logo_data = io.BytesIO(user_logo_bytes) if user_logo_bytes else fetch_academic_logo(dept)
     if logo_data:
         p_logo = doc.add_paragraph()
         p_logo.alignment = WD_ALIGN_PARAGRAPH.CENTER
         try:
-            doc.add_picture(logo_data, width=Inches(1.6))
+            doc.add_picture(logo_data, width=Inches(1.7))
         except Exception:
             pass
             
@@ -368,21 +392,27 @@ def build_docx(data, student, dept, teacher, is_rtl, with_border=True):
     p_title = doc.add_paragraph()
     set_docx_rtl(p_title, is_rtl)
     p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p_title.paragraph_format.space_before = Pt(36)
-    p_title.paragraph_format.space_after = Pt(28)
+    p_title.paragraph_format.space_before = Pt(32)
+    p_title.paragraph_format.space_after = Pt(24)
     run_title = p_title.add_run(convert_numbers(data.get("title", "ڕاپۆرتا زانستی"), is_rtl))
     format_run(run_title, size_pt=24, bold=True, color_rgb=(15, 23, 42), is_rtl=is_rtl)
     
     p_box = doc.add_paragraph()
     set_docx_rtl(p_box, is_rtl)
-    p_box.paragraph_format.space_before = Pt(40)
+    p_box.paragraph_format.space_before = Pt(36)
     lbl_s = "ئامادەکرن ژ لایێ قوتابی: " if is_rtl else "Prepared by: "
     lbl_t = "سەرپەرشتیا مامۆستا: " if is_rtl else "Supervised by: "
+    lbl_l = "ئاستێ ئەکادیمی: " if is_rtl else "Academic Level: "
     
-    r_meta = p_box.add_run(f"📋 {lbl_s}{student or '-'}\n\n👨‍🏫 {lbl_t}{teacher or '-'}\n\n📅 ساڵا ئەکادیمی: {convert_numbers('2025 - 2026', is_rtl)}")
+    r_meta = p_box.add_run(
+        f"📋 {lbl_s}{student or '-'}\n\n"
+        f"👨‍🏫 {lbl_t}{teacher or '-'}\n\n"
+        f"🎓 {lbl_l}{academic_lvl.split('(')[0].strip() or 'ئەکادیمی'}\n\n"
+        f"📅 ساڵا ئەکادیمی: {convert_numbers('2025 - 2026', is_rtl)}"
+    )
     format_run(r_meta, size_pt=14, bold=True, color_rgb=(51, 65, 85), is_rtl=is_rtl)
     
-    # بەشێ دووێ: ناڤەرۆک (دگەل ژمارا لاپەڕەیان)
+    # ٢. بەشێ ناڤەرۆکێ و پێڕستێ
     section_body = doc.add_section()
     section_body.top_margin = Inches(1)
     section_body.bottom_margin = Inches(1)
@@ -404,6 +434,53 @@ def build_docx(data, student, dept, teacher, is_rtl, with_border=True):
     p_abs.paragraph_format.line_spacing = 1.3
     r_abs = p_abs.add_run(convert_numbers(data.get("abstract", ""), is_rtl))
     format_run(r_abs, size_pt=14, bold=False, color_rgb=(30, 41, 59), is_rtl=is_rtl)
+    
+    doc.add_page_break()
+    
+    # پێڕستا ناڤەرۆکێ (Table of Contents)
+    p_toc_h = doc.add_paragraph()
+    set_docx_rtl(p_toc_h, is_rtl)
+    r_toc_h = p_toc_h.add_run("پێڕستا ناڤەرۆکێ (Table of Contents)" if is_rtl else "Table of Contents")
+    format_run(r_toc_h, size_pt=16, bold=True, color_rgb=(15, 23, 42), is_rtl=is_rtl)
+    
+    toc_items = ["پوختە (Abstract)"]
+    for idx, s in enumerate(data.get("sections", [])):
+        toc_items.append(f"{idx+1}. {s.get('heading', '')}")
+    toc_items.append("دەرئەنجام (Conclusion)")
+    toc_items.append("سەرچاوەکان (References)")
+    
+    table = doc.add_table(rows=len(toc_items) + 1, cols=2)
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    table.autofit = False
+    
+    hdr_cells = table.rows[0].cells
+    hdr_cells[0].width = Inches(5.0)
+    hdr_cells[1].width = Inches(1.5)
+    
+    p_h0 = hdr_cells[0].paragraphs[0]
+    set_docx_rtl(p_h0, is_rtl)
+    format_run(p_h0.add_run("بابەت / تەوەر" if is_rtl else "Topic / Section"), size_pt=13, bold=True, color_rgb=(15, 23, 42), is_rtl=is_rtl)
+    
+    p_h1 = hdr_cells[1].paragraphs[0]
+    set_docx_rtl(p_h1, is_rtl)
+    format_run(p_h1.add_run("لاپەڕە" if is_rtl else "Page"), size_pt=13, bold=True, color_rgb=(15, 23, 42), is_rtl=is_rtl)
+    
+    current_page_counter = 2
+    for r_idx, item_title in enumerate(toc_items):
+        row_cells = table.rows[r_idx + 1].cells
+        row_cells[0].width = Inches(5.0)
+        row_cells[1].width = Inches(1.5)
+        
+        p_c0 = row_cells[0].paragraphs[0]
+        set_docx_rtl(p_c0, is_rtl)
+        format_run(p_c0.add_run(convert_numbers(item_title, is_rtl)), size_pt=12, bold=False, color_rgb=(30, 41, 59), is_rtl=is_rtl)
+        
+        p_c1 = row_cells[1].paragraphs[0]
+        set_docx_rtl(p_c1, is_rtl)
+        format_run(p_c1.add_run(convert_numbers(str(current_page_counter), is_rtl)), size_pt=12, bold=True, color_rgb=(37, 99, 235), is_rtl=is_rtl)
+        
+        current_page_counter += 1
+        
     doc.add_page_break()
     
     # Body Sections
@@ -596,7 +673,8 @@ def build_plain_text(data, student, dept, teacher, is_rtl):
 is_rtl_lang = language != "English"
 
 if st.button("🚀 دروستکرنا ڕاپۆرت و سمینارێ", type="primary"):
-    if not api_key:
+    keys_list = parse_keys(raw_api_key)
+    if not keys_list:
         st.error("تکایە کلیلا API بنڤیسە.")
     elif not topic:
         st.warning("تکایە بابەتێ ڕاپۆرتێ بنڤیسە.")
@@ -604,11 +682,27 @@ if st.button("🚀 دروستکرنا ڕاپۆرت و سمینارێ", type="pri
         progress_bar = st.progress(0)
         status_text = st.empty()
         try:
-            content = generate_multi_step_report(topic, language, pages_count, student_name, department, teacher_name, custom_notes, api_key, progress_bar, status_text)
+            content = generate_multi_step_report(
+                topic, language, pages_count, student_name, department, 
+                teacher_name, custom_notes, academic_level, slides_count, 
+                keys_list, progress_bar, status_text
+            )
             
-            st.session_state["docx_file"] = build_docx(content, student_name, department, teacher_name, is_rtl_lang, enable_border).getvalue()
-            st.session_state["pptx_file"] = build_pptx(content, student_name, department, teacher_name, is_rtl_lang).getvalue()
-            st.session_state["plain_text"] = build_plain_text(content, student_name, department, teacher_name, is_rtl_lang)
+            user_logo_data = uploaded_logo.read() if uploaded_logo else None
+            
+            st.session_state["docx_file"] = build_docx(
+                content, student_name, department, teacher_name, 
+                is_rtl_lang, enable_border, user_logo_data, academic_level
+            ).getvalue()
+            
+            st.session_state["pptx_file"] = build_pptx(
+                content, student_name, department, teacher_name, is_rtl_lang
+            ).getvalue()
+            
+            st.session_state["plain_text"] = build_plain_text(
+                content, student_name, department, teacher_name, is_rtl_lang
+            )
+            
             st.session_state["topic_name"] = topic
             st.session_state["generated"] = True
             
@@ -625,14 +719,14 @@ if st.session_state.get("generated", False):
     col_d1, col_d2 = st.columns(2)
     with col_d1:
         st.download_button(
-            label="📄 داگرتنا فایلا Word (ڕاپۆرتا تێر و تەسەل)",
+            label="📄 داگرتنا فایلا Word (دگەل پێڕست و ڕێکخستنا ئەکادیمی)",
             data=st.session_state["docx_file"],
             file_name=f"{st.session_state['topic_name']}_report.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
     with col_d2:
         st.download_button(
-            label="📊 داگرتنا فایلا PowerPoint (سلایدێن کوردی دگەل وێنەیێن تایبەت)",
+            label="📊 داگرتنا فایلا PowerPoint (سلایدێن کوردی و وێنەیێن تایبەت)",
             data=st.session_state["pptx_file"],
             file_name=f"{st.session_state['topic_name']}_presentation.pptx",
             mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
