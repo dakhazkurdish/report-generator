@@ -28,8 +28,8 @@ language = st.selectbox("زمانێ نڤیسینێ هەڵبژێرە:", ["کور�
 pages_count = st.slider("ژمارا لاپەڕێن پێدڤی بۆ ڕاپۆرتێ:", min_value=2, max_value=8, value=3)
 
 def generate_academic_content(topic, lang, pages, key):
-    # لیستا مۆدێلان: ئەگەر ئێک قەرەباڵغ بوو (503)، خۆکارانە دچیتە سەر یێ دویڤدا
-    candidate_models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+    # بتنێ مۆدێلێن نوو و کارا یێن فەرمی
+    candidate_models = ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-3.5-flash"]
     headers = {"Content-Type": "application/json"}
     
     prompt = f"""
