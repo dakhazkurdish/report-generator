@@ -7,8 +7,8 @@ import urllib.parse
 from docx import Document
 from docx.shared import Pt, Inches, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.oxml import OxmlElement
-from docx.oxml.ns import qn
+from docx.oxml import OxmlElement, parse_xml
+from docx.oxml.ns import qn, nsdecls
 
 from pptx import Presentation
 from pptx.util import Inches as PptxInches, Pt as PptxPt
@@ -16,10 +16,20 @@ from pptx.dml.color import RGBColor as PptxRGBColor
 from pptx.enum.text import PP_ALIGN
 from pptx.enum.shapes import MSO_SHAPE
 
-st.set_page_config(page_title="سیستەمێ زیرەک یێ دروستکرنا راپورت و سمیناران", page_icon="🎓", layout="wide")
+st.set_page_config(page_title="سیستەمێ زیرەک یێ دروستکرنا راپورت و سمیناران", page_icon="🎓", layout="wide", initial_sidebar_state="collapsed")
 
+# ڤەشارتنا هەمی ئایکۆنێن گیت‌هاب، پێنوس، هێدەر و فۆتەرێن ستریملیت دا کو کەس کۆدی نەبینیت
 st.markdown("""
     <style>
+    #MainMenu {visibility: hidden !important;}
+    header {visibility: hidden !important;}
+    footer {visibility: hidden !important;}
+    .viewerBadge_container__1QSob {display: none !important;}
+    .styles_viewerBadge__1yB5G {display: none !important;}
+    [data-testid="stToolbar"] {visibility: hidden !important; display: none !important;}
+    [data-testid="stDecoration"] {visibility: hidden !important; display: none !important;}
+    [data-testid="stStatusWidget"] {visibility: hidden !important; display: none !important;}
+    
     .stApp { direction: rtl; text-align: right; }
     p, h1, h2, h3, label, div { text-align: right !important; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
     .stButton>button { width: 100%; border-radius: 8px; font-weight: bold; background-color: #1E3A8A; color: white; height: 3.2em; font-size: 16px; }
@@ -44,10 +54,13 @@ with st.container():
         topic = st.text_input("📝 بابەتێ سەرەکی یێ ڕاپۆرتێ:")
         pages_count = st.slider("📄 ژمارا لاپەڕێن پێدڤی بۆ ڕاپۆرتێ:", min_value=3, max_value=25, value=12)
 
+# بژاردەیا چوارچێوەیێ ڕاپۆرتێ
+enable_border = st.checkbox("🖼️ چوارچێوە (Border) بۆ لاپەڕێن ڕاپۆرتا Word بهێتە دانان؟", value=True)
+
 # سێرچ بۆکسێ تێبینی و ڕێنماییێن تایبەت
 custom_notes = st.text_area(
-    "💡 تێبینی یان داخوازیێن تایبەت (ئارەزوومەندانە):",
-    placeholder="بۆ نموونە: گرنگیێ ب مێژوویا بابەتی بدە، شیکارکرنا ئابووری زێدە بکە، ل سەر وەلاتێ عێراقێ باس بکە...",
+    "💡 تێبینی یان داخوازیێن تایبەت (بتنێ فەرمانە، ناچیتە ناڤ ڕاپۆرتێ):",
+    placeholder="بۆ نموونە: گرنگیێ ب مێژوویا بابەتی بدە، نموونەیێن کرداری ل سەر عێراقێ بینە، ئاستێ زمانێ ئەکادیمی گەلەک بلند بیت...",
     height=80
 )
 
@@ -78,14 +91,65 @@ def format_run(run, font_name="Calibri", size_pt=14, bold=False, color_rgb=(0, 0
         rtl.set(qn('w:val'), '1')
         rPr.append(rtl)
 
-# ئینانا وێنەیێ زانستی یێ ڕاستەقینە و گرێدای ب بابەتی ڤە بتنێ
+# زێدەکرنا ژمارا لاپەڕەی د بنی دا
+def add_page_number_to_section(section, is_rtl):
+    footer = section.footer
+    p = footer.paragraphs[0]
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = p.add_run()
+    fldChar1 = OxmlElement('w:fldChar')
+    fldChar1.set(qn('w:fldCharType'), 'begin')
+    instrText = OxmlElement('w:instrText')
+    instrText.set(qn('xml:space'), 'preserve')
+    instrText.text = "PAGE"
+    fldChar2 = OxmlElement('w:fldChar')
+    fldChar2.set(qn('w:fldCharType'), 'separate')
+    fldChar3 = OxmlElement('w:fldChar')
+    fldChar3.set(qn('w:fldCharType'), 'end')
+    run._r.append(fldChar1)
+    run._r.append(instrText)
+    run._r.append(fldChar2)
+    run._r.append(fldChar3)
+    format_run(run, size_pt=10, bold=False, color_rgb=(120, 130, 140), is_rtl=is_rtl)
+
+# زێدەکرنا چوارچێوەیێ لاپەڕەی (Page Border)
+def add_page_borders(section):
+    sectPr = section._sectPr
+    pgBorders = parse_xml(r'''
+        <w:pgBorders xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" w:offsetFrom="page">
+            <w:top w:val="single" w:sz="12" w:space="24" w:color="1E3A8A"/>
+            <w:left w:val="single" w:sz="12" w:space="24" w:color="1E3A8A"/>
+            <w:bottom w:val="single" w:sz="12" w:space="24" w:color="1E3A8A"/>
+            <w:right w:val="single" w:sz="12" w:space="24" w:color="1E3A8A"/>
+        </w:pgBorders>
+    ''')
+    sectPr.append(pgBorders)
+
+# ئینانا لۆگۆیێ ئەکادیمی یان زانکۆیی
+def fetch_academic_logo(dept_name):
+    headers = {"User-Agent": "AcademicSlideGen/5.0"}
+    if dept_name:
+        try:
+            clean_dept = urllib.parse.quote(dept_name.strip())
+            search_url = f"https://en.wikipedia.org/w/api.php?action=query&format=json&generator=search&gsrsearch={clean_dept}%20logo&gsrlimit=1&prop=pageimages&pithumbsize=400"
+            r = requests.get(search_url, headers=headers, timeout=4)
+            if r.status_code == 200:
+                pages = r.json().get("query", {}).get("pages", {})
+                for _, p_info in pages.items():
+                    thumb = p_info.get("thumbnail", {}).get("source")
+                    if thumb:
+                        img_r = requests.get(thumb, headers=headers, timeout=4)
+                        if img_r.status_code == 200 and len(img_r.content) > 1500:
+                            return io.BytesIO(img_r.content)
+        except Exception:
+            pass
+    return None
+
 def fetch_slide_image(keyword, topic_context=""):
     search_terms = [keyword, topic_context]
-    headers = {"User-Agent": "AcademicSlideGen/4.0"}
-    
+    headers = {"User-Agent": "AcademicSlideGen/5.0"}
     for term in search_terms:
-        if not term:
-            continue
+        if not term: continue
         clean_kw = urllib.parse.quote(str(term).strip())
         try:
             search_url = f"https://en.wikipedia.org/w/api.php?action=query&format=json&generator=search&gsrsearch={clean_kw}&gsrlimit=3&prop=pageimages&pithumbsize=900"
@@ -130,9 +194,16 @@ def call_gemini(prompt, key, as_json=True):
 def generate_multi_step_report(topic, lang, pages, student, dept, teacher, notes, key, progress_bar, status_text):
     num_sections = max(4, pages - 2)
     
-    notes_prompt_part = f"\nUSER'S SPECIAL INSTRUCTIONS & NOTES: \"{notes}\"\nYou MUST strictly follow and satisfy these user instructions throughout the research." if notes.strip() else ""
-    
-    status_text.write("قۆناغا ١: پلان و نەخشەڕێیا ڕاپۆرتێ و سمینارێ ل دویڤ تێبینیێن تە دهێتە دارشتن...")
+    notes_prompt_part = ""
+    if notes.strip():
+        notes_prompt_part = f"""
+        CRITICAL OPERATIONAL INSTRUCTIONS FROM USER:
+        "{notes.strip()}"
+        Apply these instructions into the content and focus of the research SILENTLY. 
+        DO NOT quote, mention, or print these instructions or phrases anywhere in the generated output text.
+        """
+        
+    status_text.write("قۆناغا ١: پلان و نەخشەڕێیا ڕاپۆرتێ و سمینارێ دهێتە دارشتن...")
     progress_bar.progress(10)
     
     plan_prompt = f"""
@@ -145,7 +216,7 @@ def generate_multi_step_report(topic, lang, pages, student, dept, teacher, notes
 
     CRITICAL RULES:
     1. Presentation slides MUST be 100% written in {lang}. Do not write bullet points in English unless target language is English.
-    2. For each slide, provide an exact, highly specific English query for `image_search_query` that specifically describes the topic of that slide (e.g. for computer networking slide: "computer network switch router cables", for solar energy: "photovoltaic solar panel installation").
+    2. For each slide, provide an exact, highly specific English query for `image_search_query` that specifically describes the topic of that slide.
 
     Return strictly a JSON object:
     {{
@@ -228,26 +299,47 @@ def generate_multi_step_report(topic, lang, pages, student, dept, teacher, notes
         "main_en_topic": main_en_topic
     }
 
-def build_docx(data, student, dept, teacher, is_rtl):
+def build_docx(data, student, dept, teacher, is_rtl, with_border=True):
     doc = Document()
-    for s in doc.sections:
-        s.top_margin = Inches(1)
-        s.bottom_margin = Inches(1)
-        s.left_margin = Inches(1)
-        s.right_margin = Inches(1)
+    
+    section_cover = doc.sections[0]
+    section_cover.top_margin = Inches(1)
+    section_cover.bottom_margin = Inches(1)
+    section_cover.left_margin = Inches(1)
+    section_cover.right_margin = Inches(1)
+    
+    if with_border:
+        add_page_borders(section_cover)
 
-    # لاپەڕا سەرەکی (Cover)
+    # 1. لاپەڕا سەرەکی (Cover Page)
+    # ئینانا لۆگۆیێ ئەکادیمی ئەگەر هەبیت
+    logo_data = fetch_academic_logo(dept)
+    if logo_data:
+        p_logo = doc.add_paragraph()
+        p_logo.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        try:
+            doc.add_picture(logo_data, width=Inches(1.6))
+        except Exception:
+            pass
+            
     p_uni = doc.add_paragraph()
     set_docx_rtl(p_uni, is_rtl)
-    r_uni = p_uni.add_run(convert_numbers(dept or "پەیمانگەهـ / زانکۆ", is_rtl))
-    format_run(r_uni, size_pt=16, bold=True, color_rgb=(30, 41, 59), is_rtl=is_rtl)
+    p_uni.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run_dept = p_uni.add_run(convert_numbers(dept or "پەیمانگەهـ / زانکۆ", is_rtl))
+    format_run(run_dept, size_pt=18, bold=True, color_rgb=(24, 43, 73), is_rtl=is_rtl)
+    
+    p_div = doc.add_paragraph()
+    p_div.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r_div = p_div.add_run("______________________________")
+    format_run(r_div, size_pt=12, bold=True, color_rgb=(203, 213, 225), is_rtl=is_rtl)
     
     p_title = doc.add_paragraph()
     set_docx_rtl(p_title, is_rtl)
-    p_title.paragraph_format.space_before = Pt(54)
-    p_title.paragraph_format.space_after = Pt(36)
-    r_title = p_title.add_run(convert_numbers(data.get("title", "ڕاپۆرتا زانستی"), is_rtl))
-    format_run(r_title, size_pt=22, bold=True, color_rgb=(15, 23, 42), is_rtl=is_rtl)
+    p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p_title.paragraph_format.space_before = Pt(36)
+    p_title.paragraph_format.space_after = Pt(28)
+    run_title = p_title.add_run(convert_numbers(data.get("title", "ڕاپۆرتا زانستی"), is_rtl))
+    format_run(run_title, size_pt=24, bold=True, color_rgb=(15, 23, 42), is_rtl=is_rtl)
     
     p_box = doc.add_paragraph()
     set_docx_rtl(p_box, is_rtl)
@@ -257,7 +349,17 @@ def build_docx(data, student, dept, teacher, is_rtl):
     
     r_meta = p_box.add_run(f"📋 {lbl_s}{student or '-'}\n\n👨‍🏫 {lbl_t}{teacher or '-'}\n\n📅 ساڵا ئەکادیمی: {convert_numbers('2025 - 2026', is_rtl)}")
     format_run(r_meta, size_pt=14, bold=True, color_rgb=(51, 65, 85), is_rtl=is_rtl)
-    doc.add_page_break()
+    
+    # بەشێ دووێ: ناڤەرۆک (دگەل ژمارا لاپەڕەیان)
+    section_body = doc.add_section()
+    section_body.top_margin = Inches(1)
+    section_body.bottom_margin = Inches(1)
+    section_body.left_margin = Inches(1)
+    section_body.right_margin = Inches(1)
+    
+    if with_border:
+        add_page_borders(section_body)
+    add_page_number_to_section(section_body, is_rtl)
     
     # Abstract
     p_abs_h = doc.add_paragraph()
@@ -272,7 +374,7 @@ def build_docx(data, student, dept, teacher, is_rtl):
     format_run(r_abs, size_pt=14, bold=False, color_rgb=(30, 41, 59), is_rtl=is_rtl)
     doc.add_page_break()
     
-    # پشکێن سەرەکی
+    # Body Sections
     for idx, sec in enumerate(data.get("sections", [])):
         p_sec_h = doc.add_paragraph()
         set_docx_rtl(p_sec_h, is_rtl)
@@ -291,7 +393,7 @@ def build_docx(data, student, dept, teacher, is_rtl):
             r_sec = p_sec.add_run(convert_numbers(p_t.strip(), is_rtl))
             format_run(r_sec, size_pt=14, bold=False, color_rgb=(30, 41, 59), is_rtl=is_rtl)
             
-    # دەرئەنجام
+    # Conclusion
     p_con_h = doc.add_paragraph()
     set_docx_rtl(p_con_h, is_rtl)
     p_con_h.paragraph_format.space_before = Pt(22)
@@ -304,7 +406,7 @@ def build_docx(data, student, dept, teacher, is_rtl):
     r_con = p_con.add_run(convert_numbers(data.get("conclusion", ""), is_rtl))
     format_run(r_con, size_pt=14, bold=False, color_rgb=(30, 41, 59), is_rtl=is_rtl)
     
-    # سەرچاوەکان
+    # References
     p_ref_h = doc.add_paragraph()
     set_docx_rtl(p_ref_h, is_rtl)
     p_ref_h.paragraph_format.space_before = Pt(24)
@@ -390,11 +492,9 @@ def build_pptx(data, student, dept, teacher, is_rtl):
         t_para.alignment = PP_ALIGN.RIGHT if is_rtl else PP_ALIGN.LEFT
         if is_rtl: t_para._pPr.set('rtl', '1')
         
-        # لێگەڕیان ل وێنەیێ تایبەت ب ڤی بابەتی
         img_query = s_item.get("image_search_query", "")
         img_data = fetch_slide_image(img_query, main_en_topic)
         
-        # ئەگەر وێنەیێ دروست هەبوو، سلاید ببیتە دوو بەش؛ ئەگەر نەبوو، دەق بەرفرەهـ بیت تا وێنەیێ ساختە نەیێت
         if img_data:
             if is_rtl:
                 text_left, text_width = PptxInches(6.8), PptxInches(5.5)
@@ -468,7 +568,7 @@ if st.button("🚀 دروستکرنا ڕاپۆرت و سمینارێ", type="pri
         try:
             content = generate_multi_step_report(topic, language, pages_count, student_name, department, teacher_name, custom_notes, api_key, progress_bar, status_text)
             
-            st.session_state["docx_file"] = build_docx(content, student_name, department, teacher_name, is_rtl_lang).getvalue()
+            st.session_state["docx_file"] = build_docx(content, student_name, department, teacher_name, is_rtl_lang, enable_border).getvalue()
             st.session_state["pptx_file"] = build_pptx(content, student_name, department, teacher_name, is_rtl_lang).getvalue()
             st.session_state["plain_text"] = build_plain_text(content, student_name, department, teacher_name, is_rtl_lang)
             st.session_state["topic_name"] = topic
@@ -476,7 +576,7 @@ if st.button("🚀 دروستکرنا ڕاپۆرت و سمینارێ", type="pri
             
             progress_bar.empty()
             status_text.empty()
-            st.success("✅ ڕاپۆرت و سمینار ل دویڤ تێبینیێن تە ب سەرکەفتیانە هاتنە دروستکرن!")
+            st.success("✅ ڕاپۆرت و سمینار ب شێوازێ ستاندارد ئامادە بوون!")
         except Exception as e:
             progress_bar.empty()
             status_text.empty()
