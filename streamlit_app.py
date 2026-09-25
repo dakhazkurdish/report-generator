@@ -214,13 +214,8 @@ def parse_keys(raw_input):
     return [k.strip() for k in re.split(r'[,;\s]+', raw_input) if k.strip()]
 
 def call_gemini(prompt, keys_list, as_json=True):
-    # دانانا gemini-3.5-flash ل سەری هەمی مۆدێلان دگەل ئەلتەرناتیڤێن نوێ
-    candidate_models = [
-        "gemini-3.5-flash",
-        "gemini-3.5-turbo",
-        "gemini-3.1-pro-preview",
-        "gemini-2.5-flash"
-    ]
+    # مۆدێلێ فەرمی یێ نوی
+    target_model = "gemini-3.8-flash"
     
     headers = {"Content-Type": "application/json"}
     payload = {
@@ -233,32 +228,27 @@ def call_gemini(prompt, keys_list, as_json=True):
     
     last_error = ""
     for current_key in keys_list:
-        for model_name in candidate_models:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={current_key}"
-            
-            # هەوڵدانا دووبارە بۆ چارەسەرکرنا خەلەتیا 503 (سێرڤەری قەرەباڵغ)
-            for attempt in range(2):
-                try:
-                    res = requests.post(url, headers=headers, json=payload, timeout=90)
-                    if res.status_code == 200:
-                        result = res.json()
-                        text_content = result["candidates"][0]["content"]["parts"][0]["text"]
-                        return json.loads(text_content) if as_json else text_content
-                    elif res.status_code in [503, 429]:
-                        last_error = f"{res.status_code}: سێرڤەر قەرەباڵغە ({model_name})"
-                        time.sleep(3)  # ڕاوەستان بۆ ئارامبوونا سێرڤەری
-                        continue
-                    elif res.status_code == 404:
-                        # ئەگەر مۆدێل بەردەست نەبوو یان نەهاتە دیتن، بێ وەستان بچۆ مۆدێلێ دواتر
-                        last_error = res.text
-                        break
-                    else:
-                        last_error = res.text
-                        break
-                except Exception as e:
-                    last_error = str(e)
-                    time.sleep(2)
-                    
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{target_model}:generateContent?key={current_key}"
+        
+        # تا ٣ جاران هەوڵ ددەت ئەگەر سێرڤەر قەرەباڵغ بوو (503 یان 429)
+        for attempt in range(3):
+            try:
+                res = requests.post(url, headers=headers, json=payload, timeout=90)
+                if res.status_code == 200:
+                    result = res.json()
+                    text_content = result["candidates"][0]["content"]["parts"][0]["text"]
+                    return json.loads(text_content) if as_json else text_content
+                elif res.status_code in [503, 429]:
+                    last_error = f"{res.status_code}: سێرڤەر قەرەباڵغە، ب تنێ چەند چرکەیان بوەستە..."
+                    time.sleep(4)
+                    continue
+                else:
+                    last_error = res.text
+                    break
+            except Exception as e:
+                last_error = str(e)
+                time.sleep(2)
+                
     raise Exception(f"API Error: {last_error}")
 
 def generate_multi_step_report(topic, lang, pages, student, dept, teacher, notes, academic_lvl, s_count, keys_list, progress_bar, status_text):
