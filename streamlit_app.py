@@ -86,10 +86,22 @@ with col_sub2:
     uploaded_logo = st.file_uploader("🏛️ بارکرنا لۆگۆیێ فەرمی یێ زانکۆیێ (ئارەزوومەندانە):", type=["png", "jpg", "jpeg"])
 
 custom_notes = st.text_area(
-    "💡 تێبینی یان داخوازیێن تایبەت (بتنێ فەرمانە، ناچیتە ناڤ ڕاپۆرتێ):",
-    placeholder="بۆ نموونە: گرنگیێ ب مێژوویا بابەتی بدە، نموونەیێن کرداری بینە، ئاستێ زانستی گەلەک بلند بیت...",
-    height=80
+    "💡 فەرمان و تێبینیێن تایبەت (قەبارێ خەتی، رەنگێ نڤیسینێ، تیشک خستنە سەر بەشەکی... هتد):",
+    placeholder="بۆ نموونە: قەبارێ خەتێ سەرەکی مەزن بکە (28)، رەنگێ نڤیسینێ کەسک یان شینێ تاریک بیت، گرنگیێ ب مێژوویا بابەتی بدە...",
+    height=90
 )
+
+def hex_to_rgb(hex_str, default_rgb=(30, 41, 59)):
+    """گوهۆڕینا کودی رەنگی ژ HEX بۆ RGB"""
+    if not hex_str:
+        return default_rgb
+    try:
+        hex_clean = hex_str.lstrip('#')
+        if len(hex_clean) == 6:
+            return tuple(int(hex_clean[i:i+2], 16) for i in (0, 2, 4))
+    except Exception:
+        pass
+    return default_rgb
 
 def convert_numbers(text, is_rtl):
     if not is_rtl or not text:
@@ -138,14 +150,15 @@ def add_page_number_to_section(section, is_rtl):
     run._r.append(fldChar3)
     format_run(run, size_pt=10, bold=False, color_rgb=(120, 130, 140), is_rtl=is_rtl)
 
-def add_page_borders(section):
+def add_page_borders(section, border_color_hex="1E3A8A"):
     sectPr = section._sectPr
-    pgBorders = parse_xml(r'''
+    clean_hex = border_color_hex.lstrip('#')
+    pgBorders = parse_xml(rf'''
         <w:pgBorders xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" w:offsetFrom="page">
-            <w:top w:val="single" w:sz="12" w:space="24" w:color="1E3A8A"/>
-            <w:left w:val="single" w:sz="12" w:space="24" w:color="1E3A8A"/>
-            <w:bottom w:val="single" w:sz="12" w:space="24" w:color="1E3A8A"/>
-            <w:right w:val="single" w:sz="12" w:space="24" w:color="1E3A8A"/>
+            <w:top w:val="single" w:sz="12" w:space="24" w:color="{clean_hex}"/>
+            <w:left w:val="single" w:sz="12" w:space="24" w:color="{clean_hex}"/>
+            <w:bottom w:val="single" w:sz="12" w:space="24" w:color="{clean_hex}"/>
+            <w:right w:val="single" w:sz="12" w:space="24" w:color="{clean_hex}"/>
         </w:pgBorders>
     ''')
     sectPr.append(pgBorders)
@@ -206,7 +219,6 @@ def extract_clean_json(text):
 
 @st.cache_data(ttl=3600)
 def discover_active_models(api_key):
-    """دۆزینەوەیا مۆدێلان ب پاراستن (Cache) داکو داخوازی زێدە نەچنە سەر کلیلێ"""
     url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
     try:
         res = requests.get(url, timeout=8)
@@ -242,13 +254,10 @@ def call_gemini(prompt, keys_list, status_text=None):
         
         for model_name in candidate_models:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={current_key}"
-            
-            # هەوڵدانا دووبارە (Retry) ب کێمەک بێهنڤەدان ئەگەر 429 چێبوو
             max_retries = 2
             for attempt in range(max_retries):
                 try:
                     res = requests.post(url, headers=headers, json=payload, timeout=90)
-                    
                     if res.status_code == 200:
                         data = res.json()
                         candidates = data.get("candidates", [])
@@ -256,19 +265,17 @@ def call_gemini(prompt, keys_list, status_text=None):
                             parts = candidates[0]["content"].get("parts", [])
                             if parts and "text" in parts[0]:
                                 return extract_clean_json(parts[0]["text"])
-                                
                     elif res.status_code in [429, 503]:
                         last_error = f"کلیلا ({key_idx + 1}) قەرەباڵغە (429 - Rate Limit)."
                         if attempt < max_retries - 1:
                             if status_text:
-                                status_text.write(f"⏳ کلیلا ({key_idx + 1}) گەهشتە سنورێ خولەکی، {3 * (attempt + 1)} چرکە چاڤەڕێ بە...")
+                                status_text.write(f"⏳ کلیلا ({key_idx + 1}) چەند چرکەکان چاڤەڕێ دبیت...")
                             time.sleep(3 * (attempt + 1))
                             continue
                         else:
-                            break  # دەرباز بە سەر کلیلا دویڤدا
-                            
+                            break
                     elif res.status_code == 404:
-                        break  # مۆدێل بوونی نینە، بچە سەر مۆدێلێ دی
+                        break
                     else:
                         try:
                             err_detail = res.json().get("error", {}).get("message", res.text)
@@ -276,7 +283,6 @@ def call_gemini(prompt, keys_list, status_text=None):
                             err_detail = res.text
                         last_error = f"خەلەتیا API ({res.status_code}): {err_detail}"
                         break
-                        
                 except requests.exceptions.Timeout:
                     last_error = "دەمی وەڵامێ درێژ کێشا (Timeout)."
                     break
@@ -292,30 +298,51 @@ def generate_report(topic, lang, pages, student, dept, teacher, notes, academic_
     notes_prompt_part = ""
     if notes.strip():
         notes_prompt_part = f"""
-        CRITICAL OPERATIONAL INSTRUCTIONS:
+        =======================================================
+        ⚠️ USER SPECIFIC INSTRUCTIONS & DIRECTIVES:
         "{notes.strip()}"
-        Apply these instructions into the content. DO NOT print or quote them.
+        
+        STRICT RULES FOR THESE INSTRUCTIONS:
+        1. DO NOT print, copy, paste, or quote these user instructions anywhere inside the report text or slides.
+        2. If the user asked to focus on a certain concept or angle, weave it smoothly into the academic analysis.
+        3. If the user mentioned styling (e.g. font size, text color, slide theme, dark/light theme, accent colors), EXTRACT and MAP them into the "styling" JSON object below. Convert any requested color names into valid 6-character HEX strings (e.g. Blue -> #1E3A8A, Navy -> #0F172A, Gold -> #D97706, Green -> #15803D, Red -> #B91C1C, Dark Gray -> #1E293B).
+        =======================================================
         """
         
     status_text.write("⚡ ژیرییا دەستکرد هەمی ڕاپۆرت و سمینارێ ئامادە دکەت...")
     progress_bar.progress(35)
     
     prompt = f"""
-    Create a complete academic research report and presentation slides for the topic: "{topic}".
+    You are an expert academic scholar and presentation designer.
+    Create a complete academic research report and presentation slides for: "{topic}".
     Language: {lang}.
+    Academic Level: {academic_lvl}.
     Student: "{student}", Department: "{dept}", Supervisor: "{teacher}".
-    Target Academic Level: {academic_lvl}.
     Required Sections count: {num_sections}.
     Required Presentation Slides count: {s_count}.
+
     {notes_prompt_part}
 
     CRITICAL RULES:
-    1. Write everything inside strictly in {lang} (except English query for image).
-    2. Write focused, informative scholarly paragraphs for EACH section inside "sections".
+    1. Write everything inside strictly in {lang} (except English query for image search).
+    2. Write scholarly, rich paragraphs for EACH section inside "sections".
     3. Exactly {s_count} slides inside "slides".
+    4. Provide the "styling" object based on the user's styling instructions, or use modern default values if not specified.
 
     Return strictly a valid JSON object matching this schema:
     {{
+        "styling": {{
+            "word_title_color_hex": "#152342",
+            "word_body_color_hex": "#1E293B",
+            "word_primary_theme_hex": "#1E3A8A",
+            "word_title_size_pt": 24,
+            "word_body_size_pt": 14,
+            "slide_bg_color_hex": "#0F172A",
+            "slide_accent_color_hex": "#F59E0B",
+            "slide_text_color_hex": "#FFFFFF",
+            "slide_title_size_pt": 26,
+            "slide_body_size_pt": 18
+        }},
         "title": "Full Academic Title in {lang}",
         "abstract": "Academic abstract in {lang} (120-180 words)",
         "english_main_topic": "2 simple english words for topic",
@@ -346,6 +373,7 @@ def generate_report(topic, lang, pages, student, dept, teacher, notes, academic_
     status_text.write("فایلێن Word و PowerPoint دروست دبن...")
     
     return {
+        "styling": result.get("styling", {}),
         "title": result.get("title", topic),
         "abstract": result.get("abstract", ""),
         "sections": result.get("sections", []),
@@ -356,6 +384,17 @@ def generate_report(topic, lang, pages, student, dept, teacher, notes, academic_
     }
 
 def build_docx(data, student, dept, teacher, is_rtl, with_border=True, user_logo_bytes=None, academic_lvl=""):
+    styling = data.get("styling", {})
+    
+    # دەرهێنانا رەنگ و قەبارەیێن دیارکری ژ لایێ بەکارهێنەری ڤە
+    title_color_rgb = hex_to_rgb(styling.get("word_title_color_hex"), (15, 23, 42))
+    body_color_rgb = hex_to_rgb(styling.get("word_body_color_hex"), (30, 41, 59))
+    theme_hex = styling.get("word_primary_theme_hex", "#1E3A8A")
+    theme_color_rgb = hex_to_rgb(theme_hex, (30, 58, 138))
+    
+    title_size = int(styling.get("word_title_size_pt", 24))
+    body_size = int(styling.get("word_body_size_pt", 14))
+
     doc = Document()
     section_cover = doc.sections[0]
     section_cover.top_margin = Inches(1)
@@ -364,7 +403,7 @@ def build_docx(data, student, dept, teacher, is_rtl, with_border=True, user_logo
     section_cover.right_margin = Inches(1)
     
     if with_border:
-        add_page_borders(section_cover)
+        add_page_borders(section_cover, border_color_hex=theme_hex)
 
     logo_data = io.BytesIO(user_logo_bytes) if user_logo_bytes else fetch_academic_logo(dept)
     if logo_data:
@@ -379,7 +418,7 @@ def build_docx(data, student, dept, teacher, is_rtl, with_border=True, user_logo
     set_docx_rtl(p_uni, is_rtl)
     p_uni.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run_dept = p_uni.add_run(convert_numbers(dept or "پەیمانگەهـ / زانکۆ", is_rtl))
-    format_run(run_dept, size_pt=18, bold=True, color_rgb=(24, 43, 73), is_rtl=is_rtl)
+    format_run(run_dept, size_pt=18, bold=True, color_rgb=theme_color_rgb, is_rtl=is_rtl)
     
     p_div = doc.add_paragraph()
     p_div.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -392,7 +431,7 @@ def build_docx(data, student, dept, teacher, is_rtl, with_border=True, user_logo
     p_title.paragraph_format.space_before = Pt(32)
     p_title.paragraph_format.space_after = Pt(24)
     run_title = p_title.add_run(convert_numbers(data.get("title", "ڕاپۆرتا زانستی"), is_rtl))
-    format_run(run_title, size_pt=24, bold=True, color_rgb=(15, 23, 42), is_rtl=is_rtl)
+    format_run(run_title, size_pt=title_size, bold=True, color_rgb=title_color_rgb, is_rtl=is_rtl)
     
     p_box = doc.add_paragraph()
     set_docx_rtl(p_box, is_rtl)
@@ -416,26 +455,26 @@ def build_docx(data, student, dept, teacher, is_rtl, with_border=True, user_logo
     section_body.right_margin = Inches(1)
     
     if with_border:
-        add_page_borders(section_body)
+        add_page_borders(section_body, border_color_hex=theme_hex)
     add_page_number_to_section(section_body, is_rtl)
     
     p_abs_h = doc.add_paragraph()
     set_docx_rtl(p_abs_h, is_rtl)
     r_abs_h = p_abs_h.add_run("پوختە (Abstract)" if is_rtl else "Abstract")
-    format_run(r_abs_h, size_pt=16, bold=True, color_rgb=(15, 23, 42), is_rtl=is_rtl)
+    format_run(r_abs_h, size_pt=16, bold=True, color_rgb=title_color_rgb, is_rtl=is_rtl)
     
     p_abs = doc.add_paragraph()
     set_docx_rtl(p_abs, is_rtl)
     p_abs.paragraph_format.line_spacing = 1.3
     r_abs = p_abs.add_run(convert_numbers(data.get("abstract", ""), is_rtl))
-    format_run(r_abs, size_pt=14, bold=False, color_rgb=(30, 41, 59), is_rtl=is_rtl)
+    format_run(r_abs, size_pt=body_size, bold=False, color_rgb=body_color_rgb, is_rtl=is_rtl)
     
     doc.add_page_break()
     
     p_toc_h = doc.add_paragraph()
     set_docx_rtl(p_toc_h, is_rtl)
     r_toc_h = p_toc_h.add_run("پێڕستا ناڤەرۆکێ (Table of Contents)" if is_rtl else "Table of Contents")
-    format_run(r_toc_h, size_pt=16, bold=True, color_rgb=(15, 23, 42), is_rtl=is_rtl)
+    format_run(r_toc_h, size_pt=16, bold=True, color_rgb=title_color_rgb, is_rtl=is_rtl)
     
     toc_items = ["پوختە (Abstract)"]
     for idx, s in enumerate(data.get("sections", [])):
@@ -453,11 +492,11 @@ def build_docx(data, student, dept, teacher, is_rtl, with_border=True, user_logo
     
     p_h0 = hdr_cells[0].paragraphs[0]
     set_docx_rtl(p_h0, is_rtl)
-    format_run(p_h0.add_run("بابەت / تەوەر" if is_rtl else "Topic / Section"), size_pt=13, bold=True, color_rgb=(15, 23, 42), is_rtl=is_rtl)
+    format_run(p_h0.add_run("بابەت / تەوەر" if is_rtl else "Topic / Section"), size_pt=13, bold=True, color_rgb=title_color_rgb, is_rtl=is_rtl)
     
     p_h1 = hdr_cells[1].paragraphs[0]
     set_docx_rtl(p_h1, is_rtl)
-    format_run(p_h1.add_run("لاپەڕە" if is_rtl else "Page"), size_pt=13, bold=True, color_rgb=(15, 23, 42), is_rtl=is_rtl)
+    format_run(p_h1.add_run("لاپەڕە" if is_rtl else "Page"), size_pt=13, bold=True, color_rgb=title_color_rgb, is_rtl=is_rtl)
     
     current_page_counter = 2
     for r_idx, item_title in enumerate(toc_items):
@@ -467,7 +506,7 @@ def build_docx(data, student, dept, teacher, is_rtl, with_border=True, user_logo
         
         p_c0 = row_cells[0].paragraphs[0]
         set_docx_rtl(p_c0, is_rtl)
-        format_run(p_c0.add_run(convert_numbers(item_title, is_rtl)), size_pt=12, bold=False, color_rgb=(30, 41, 59), is_rtl=is_rtl)
+        format_run(p_c0.add_run(convert_numbers(item_title, is_rtl)), size_pt=12, bold=False, color_rgb=body_color_rgb, is_rtl=is_rtl)
         
         p_c1 = row_cells[1].paragraphs[0]
         set_docx_rtl(p_c1, is_rtl)
@@ -483,7 +522,7 @@ def build_docx(data, student, dept, teacher, is_rtl, with_border=True, user_logo
         p_sec_h.paragraph_format.space_before = Pt(20)
         p_sec_h.paragraph_format.space_after = Pt(8)
         r_sec_h = p_sec_h.add_run(convert_numbers(f"{idx+1}. {sec.get('heading', '')}", is_rtl))
-        format_run(r_sec_h, size_pt=16, bold=True, color_rgb=(15, 23, 42), is_rtl=is_rtl)
+        format_run(r_sec_h, size_pt=16, bold=True, color_rgb=title_color_rgb, is_rtl=is_rtl)
         
         paras = sec.get('content', '').split("\n\n")
         for p_t in paras:
@@ -494,25 +533,25 @@ def build_docx(data, student, dept, teacher, is_rtl, with_border=True, user_logo
             p_sec.paragraph_format.line_spacing = 1.3
             p_sec.paragraph_format.space_after = Pt(12)
             r_sec = p_sec.add_run(convert_numbers(p_t.strip(), is_rtl))
-            format_run(r_sec, size_pt=14, bold=False, color_rgb=(30, 41, 59), is_rtl=is_rtl)
+            format_run(r_sec, size_pt=body_size, bold=False, color_rgb=body_color_rgb, is_rtl=is_rtl)
             
     p_con_h = doc.add_paragraph()
     set_docx_rtl(p_con_h, is_rtl)
     p_con_h.paragraph_format.space_before = Pt(22)
     r_con_h = p_con_h.add_run("دەرئەنجام (Conclusion)" if is_rtl else "Conclusion")
-    format_run(r_con_h, size_pt=16, bold=True, color_rgb=(15, 23, 42), is_rtl=is_rtl)
+    format_run(r_con_h, size_pt=16, bold=True, color_rgb=title_color_rgb, is_rtl=is_rtl)
     
     p_con = doc.add_paragraph()
     set_docx_rtl(p_con, is_rtl)
     p_con.paragraph_format.line_spacing = 1.3
     r_con = p_con.add_run(convert_numbers(data.get("conclusion", ""), is_rtl))
-    format_run(r_con, size_pt=14, bold=False, color_rgb=(30, 41, 59), is_rtl=is_rtl)
+    format_run(r_con, size_pt=body_size, bold=False, color_rgb=body_color_rgb, is_rtl=is_rtl)
     
     p_ref_h = doc.add_paragraph()
     set_docx_rtl(p_ref_h, is_rtl)
     p_ref_h.paragraph_format.space_before = Pt(24)
     r_ref_h = p_ref_h.add_run("سەرچاوەکان (References)" if is_rtl else "References")
-    format_run(r_ref_h, size_pt=16, bold=True, color_rgb=(15, 23, 42), is_rtl=is_rtl)
+    format_run(r_ref_h, size_pt=16, bold=True, color_rgb=title_color_rgb, is_rtl=is_rtl)
     
     for ref in data.get("references", []):
         p_ref = doc.add_paragraph()
@@ -527,16 +566,26 @@ def build_docx(data, student, dept, teacher, is_rtl, with_border=True, user_logo
     return bio
 
 def build_pptx(data, student, dept, teacher, is_rtl):
+    styling = data.get("styling", {})
+    
+    # دیاریکردنا رەنگ و قەبارەیێن سلایدان
+    bg_rgb = hex_to_rgb(styling.get("slide_bg_color_hex"), (15, 23, 42))
+    accent_rgb = hex_to_rgb(styling.get("slide_accent_color_hex"), (245, 158, 11))
+    text_rgb = hex_to_rgb(styling.get("slide_text_color_hex"), (255, 255, 255))
+    
+    title_size_pt = int(styling.get("slide_title_size_pt", 26))
+    body_size_pt = int(styling.get("slide_body_size_pt", 18))
+    
+    DARK_BG = PptxRGBColor(*bg_rgb)
+    ACCENT_GOLD = PptxRGBColor(*accent_rgb)
+    WHITE = PptxRGBColor(*text_rgb)
+    LIGHT_GRAY = PptxRGBColor(203, 213, 225)
+    CARD_BG = PptxRGBColor(min(bg_rgb[0] + 15, 255), min(bg_rgb[1] + 18, 255), min(bg_rgb[2] + 25, 255))
+
     prs = Presentation()
     prs.slide_width = PptxInches(13.333)
     prs.slide_height = PptxInches(7.5)
     blank_layout = prs.slide_layouts[6]
-    
-    DARK_BG = PptxRGBColor(15, 23, 42)
-    ACCENT_GOLD = PptxRGBColor(245, 158, 11)
-    WHITE = PptxRGBColor(255, 255, 255)
-    LIGHT_GRAY = PptxRGBColor(203, 213, 225)
-    CARD_BG = PptxRGBColor(30, 41, 59)
     
     s1 = prs.slides.add_slide(blank_layout)
     bg1 = s1.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, prs.slide_width, prs.slide_height)
@@ -588,7 +637,7 @@ def build_pptx(data, student, dept, teacher, is_rtl):
         t_frame = t_box.text_frame
         t_para = t_frame.paragraphs[0]
         t_para.text = convert_numbers(s_item.get("slide_title", ""), is_rtl)
-        t_para.font.size = PptxPt(26)
+        t_para.font.size = PptxPt(title_size_pt)
         t_para.font.bold = True
         t_para.font.color.rgb = ACCENT_GOLD
         t_para.alignment = PP_ALIGN.RIGHT if is_rtl else PP_ALIGN.LEFT
@@ -621,7 +670,7 @@ def build_pptx(data, student, dept, teacher, is_rtl):
         for idx, pt in enumerate(s_item.get("bullet_points", [])):
             para = c_frame.paragraphs[0] if idx == 0 else c_frame.add_paragraph()
             para.text = f"•  {convert_numbers(pt, is_rtl)}"
-            para.font.size = PptxPt(18)
+            para.font.size = PptxPt(body_size_pt)
             para.font.color.rgb = WHITE
             para.alignment = PP_ALIGN.RIGHT if is_rtl else PP_ALIGN.LEFT
             para.space_after = PptxPt(16)
@@ -725,5 +774,3 @@ if st.session_state.get("generated", False):
     st.markdown("### 📋 دەقێ ڕاپۆرتێ بۆ کۆپیکردنا ڕاستەوخۆ:")
     st.caption("دشێی ڤی دەقی دیاربکەی (Ctrl+A پاشان Ctrl+C) و پەیست بکەیە ناڤ وۆردێ خو بێی داگرتن:")
     st.text_area("", value=st.session_state["plain_text"], height=400)
-
-
