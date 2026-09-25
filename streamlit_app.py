@@ -57,10 +57,7 @@ st.title("سیستەمێ زیرەک یێ دروستکرنا راپورت و سم
 
 raw_api_key = st.secrets.get("GEMINI_API_KEY", "")
 if not raw_api_key:
-    raw_api_key = st.text_input(
-        "🔑 کلیلا Gemini API لێرە بنڤیسە (تێبینی: دشێی ٢ یان ٣ کلیلێن جودا ب فاریزە ',' دابنێ):", 
-        type="password"
-    )
+    raw_api_key = st.text_input("کلیلا Gemini API لێرە بنڤیسە (دشێی چەند کلیلان ب کۆما جودا بکەی):", type="password")
 
 with st.container():
     col1, col2 = st.columns(2)
@@ -79,8 +76,8 @@ with st.container():
     with col2:
         teacher_name = st.text_input("👨‍🏫 ناڤێ مامۆستایێ بابەتی:")
         topic = st.text_input("📝 بابەتێ سەرەکی یێ ڕاپۆرتێ:")
-        pages_count = st.slider("📄 ژمارا لاپەڕێن پێدڤی بۆ ڕاپۆرتێ:", min_value=3, max_value=25, value=8)
-        slides_count = st.slider("📊 ژمارا سلایدێن پاوەرپۆینتێ (Seminar):", min_value=5, max_value=20, value=6)
+        pages_count = st.slider("📄 ژمارا لاپەڕێن پێدڤی بۆ ڕاپۆرتێ:", min_value=3, max_value=25, value=6)
+        slides_count = st.slider("📊 ژمارا سلایدێن پاوەرپۆینتێ (Seminar):", min_value=4, max_value=15, value=5)
 
 col_sub1, col_sub2 = st.columns(2)
 with col_sub1:
@@ -207,28 +204,24 @@ def extract_clean_json(text):
         return json.loads(text[start:end+1])
     return json.loads(text.strip())
 
-def call_gemini(prompt, keys_list, status_text=None):
-    # مۆدێلێن چالاک و فەرمی
-    candidate_models = ["gemini-2.5-flash", "gemini-2.0-flash"]
+def call_gemini(prompt, keys_list):
+    candidate_models = ["gemini-2.0-flash", "gemini-2.5-flash"]
     headers = {"Content-Type": "application/json"}
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
             "response_mime_type": "application/json",
-            "maxOutputTokens": 8192
+            "maxOutputTokens": 4096
         }
     }
     
     last_error = ""
-    max_rounds = 3  # هەتا ٣ خولان تاقی دکەت ئەگەر هەردوو کلیل قەرەباڵغ بوون
-
-    for current_round in range(1, max_rounds + 1):
-        for key_idx, current_key in enumerate(keys_list):
-            for model_name in candidate_models:
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={current_key}"
+    for key_idx, current_key in enumerate(keys_list):
+        for model_name in candidate_models:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={current_key}"
+            for attempt in range(2):
                 try:
                     res = requests.post(url, headers=headers, json=payload, timeout=90)
-                    
                     if res.status_code == 200:
                         data = res.json()
                         candidates = data.get("candidates", [])
@@ -236,43 +229,26 @@ def call_gemini(prompt, keys_list, status_text=None):
                             parts = candidates[0]["content"].get("parts", [])
                             if parts and "text" in parts[0]:
                                 return extract_clean_json(parts[0]["text"])
-                                
                     elif res.status_code in [429, 503]:
-                        last_error = f"کلیل ({key_idx + 1}) قەرەباڵغ بوو (کۆدێ {res.status_code})."
-                        # ئێکسەر دەرباز دبیتە سەر کلیلا دویڤدا
+                        last_error = f"کلیل ({key_idx + 1}) قەرەباڵغ بوو، چاڤەڕێی سەرچاوەیێ دویڤدا بە..."
+                        time.sleep(10)
                         break
-                        
                     elif res.status_code == 404:
-                        # ئەگەر مۆدێل نەما، دەستبەجێ بچە مۆدێلێ دی
-                        continue
+                        break
                     else:
                         last_error = f"خەلەتیا API: {res.status_code} - {res.text}"
-                        continue
-                        
+                        break
                 except requests.exceptions.Timeout:
                     last_error = "دەمی وەڵامێ درێژ کێشا (Timeout)، ئینتەرنێت لاوازە."
                     continue
                 except Exception as e:
                     last_error = str(e)
                     continue
-
-        # ئەگەر هەمی کلیلان 429 دا، کێمەکێ ڕاوەستە و دووبارە تاقی بکە
-        if current_round < max_rounds:
-            wait_time = 10 * current_round
-            if status_text:
-                status_text.warning(f"⏳ سێرڤەرێن گووگڵ قەرەباڵغن، ب تنێ {wait_time} چرکەیان بوەستە سیستەم دێ ب ئۆتۆماتیکی دووبارە تاقی کەت...")
-            time.sleep(wait_time)
-            if status_text:
-                status_text.info("⚡ دووبارە پشکنین دەستپێکر...")
                     
-    raise Exception(
-        f"{last_error}\n\n"
-        "💡 چارەسەری: ئەگەر هەردوو کلیل ژ ئێک ئەکاونتێ گووگڵ بن، سنوورێ وان ئێکە. "
-        "تکایە ب ئیمەیڵەکێ (Gmail) دی کلیلەکێ چێکە دا قەبارێ تە نوو ببیتەڤە."
-    )
+    raise Exception(last_error or "پەیوەندی دروست نەبوو، کلیل و ئینتەرنێتا خوە بپشکنە.")
 
 def generate_report(topic, lang, pages, student, dept, teacher, notes, academic_lvl, s_count, keys_list, progress_bar, status_text):
-    num_sections = max(3, min(6, pages - 2))
+    num_sections = max(3, min(5, pages - 2))
     
     notes_prompt_part = ""
     if notes.strip():
@@ -296,26 +272,25 @@ def generate_report(topic, lang, pages, student, dept, teacher, notes, academic_
 
     CRITICAL RULES:
     1. Write everything inside strictly in {lang} (except English query for image).
-    2. Write deep, multi-paragraph scholarly text for EACH section inside "sections".
+    2. Write focused, informative scholarly paragraphs for EACH section inside "sections".
     3. Exactly {s_count} slides inside "slides".
 
     Return strictly a valid JSON object matching this schema:
     {{
         "title": "Full Academic Title in {lang}",
-        "abstract": "Academic abstract in {lang} (150-250 words)",
+        "abstract": "Academic abstract in {lang} (120-180 words)",
         "english_main_topic": "2 simple english words for topic",
         "sections": [
             {{
-                "heading": "Section 1 Title in {lang}",
-                "content": "Comprehensive detailed text with multiple paragraphs..."
+                "heading": "Section Title in {lang}",
+                "content": "Scholarly detailed text in paragraphs..."
             }}
         ],
         "conclusion": "Formal academic conclusion in {lang}",
         "references": [
             "APA Reference 1",
             "APA Reference 2",
-            "APA Reference 3",
-            "APA Reference 4"
+            "APA Reference 3"
         ],
         "slides": [
             {{
@@ -327,7 +302,7 @@ def generate_report(topic, lang, pages, student, dept, teacher, notes, academic_
     }}
     """
     
-    result = call_gemini(prompt, keys_list, status_text)
+    result = call_gemini(prompt, keys_list)
     progress_bar.progress(85)
     status_text.write("فایلێن Word و PowerPoint دروست دبن...")
     
