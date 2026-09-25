@@ -86,13 +86,12 @@ with col_sub2:
     uploaded_logo = st.file_uploader("🏛️ بارکرنا لۆگۆیێ فەرمی یێ زانکۆیێ (ئارەزوومەندانە):", type=["png", "jpg", "jpeg"])
 
 custom_notes = st.text_area(
-    "💡 فەرمان و تێبینیێن تایبەت (قەبارێ خەتی، رەنگێ نڤیسینێ، تیشک خستنە سەر بەشەکی... هتد):",
-    placeholder="بۆ نموونە: قەبارێ خەتێ سەرەکی مەزن بکە (28)، رەنگێ نڤیسینێ کەسک یان شینێ تاریک بیت، گرنگیێ ب مێژوویا بابەتی بدە...",
-    height=90
+    "💡 فەرمان و تێبینیێن تایبەت (تەوەرێن گرنگ، قەبارێ خەتی، گوهۆڕینا رەنگان):",
+    placeholder="بۆ نموونە: تیشکێ بێخە سەر بەشێ مێژوویێ، ل پاوەرپۆینتێ قەبارێ خەتێ سەرەکی ٢٨ بیت...",
+    height=80
 )
 
 def hex_to_rgb(hex_str, default_rgb=(30, 41, 59)):
-    """گوهۆڕینا کودی رەنگی ژ HEX بۆ RGB"""
     if not hex_str:
         return default_rgb
     try:
@@ -205,6 +204,92 @@ def fetch_slide_image(keyword, topic_context=""):
         pass
     return None
 
+def apply_slide_transition_and_animations(slide, text_shape_id=None, num_points=0):
+    """
+    زێدەکرنا ئەنیمەیشنا گواستنەوەیا سلایدان (Transition Fade)
+    دگەل ئەنیمەیشنا دەرکەفتنا خاڵان ب شێوازێ کلیک-بۆ-کلیک (On-Click Paragraph Entrance)
+    """
+    # 1. ئەنیمەیشنا گواستنەوەیا نەرم یا سلایدان (Smooth Fade Transition)
+    transition_xml = parse_xml(r'''
+        <p:transition xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" spd="med">
+            <p:fade/>
+        </p:transition>
+    ''')
+    slide._element.append(transition_xml)
+
+    # ئەگەر سلاید خاڵێن هەبن، ئەنیمەیشنا خاڵ-بۆ-خاڵ بۆ چێدکەین
+    if not text_shape_id or num_points <= 0:
+        return
+
+    child_nodes = []
+    base_id = 100
+    for idx in range(num_points):
+        c_tn_id = base_id + (idx * 3) + 1
+        inner_id1 = c_tn_id + 1
+        
+        p_node = f'''
+        <p:par xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+            <p:cTn id="{c_tn_id}" fill="hold" nodeType="clickEffect">
+                <p:stCondLst>
+                    <p:cond delay="0"/>
+                </p:stCondLst>
+                <p:childTnLst>
+                    <p:set>
+                        <p:cBhvr>
+                            <p:cTn id="{inner_id1}" dur="1" fill="hold"/>
+                            <p:tgtEl>
+                                <p:spTgt spid="{text_shape_id}">
+                                    <p:txEl>
+                                        <p:pRg st="{idx}" end="{idx}"/>
+                                    </p:txEl>
+                                </p:spTgt>
+                            </p:tgtEl>
+                            <p:attrNameLst>
+                                <p:attrName>style.visibility</p:attrName>
+                            </p:attrNameLst>
+                        </p:cBhvr>
+                        <p:to>
+                            <p:strVal val="visible"/>
+                        </p:to>
+                    </p:set>
+                </p:childTnLst>
+            </p:cTn>
+        </p:par>
+        '''
+        child_nodes.append(p_node)
+
+    all_children_xml = "".join(child_nodes)
+
+    timing_xml = parse_xml(rf'''
+    <p:timing xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+        <p:tnLst>
+            <p:par>
+                <p:cTn id="1" dur="indefinite" restart="always" nodeType="tmRoot">
+                    <p:childTnLst>
+                        <p:seq concurrent="1" nextAc="seek">
+                            <p:cTn id="2" dur="indefinite" nodeType="mainSeq">
+                                <p:childTnLst>
+                                    {all_children_xml}
+                                </p:childTnLst>
+                            </p:cTn>
+                            <p:prevCondLst>
+                                <p:cond evt="onPrev" delay="0"/>
+                            </p:prevCondLst>
+                            <p:nextCondLst>
+                                <p:cond evt="onNext" delay="0"/>
+                            </p:nextCondLst>
+                        </p:seq>
+                    </p:childTnLst>
+                </p:cTn>
+            </p:par>
+        </p:tnLst>
+        <p:bldLst>
+            <p:bldP spid="{text_shape_id}" grpId="0" build="p"/>
+        </p:bldLst>
+    </p:timing>
+    ''')
+    slide._element.append(timing_xml)
+
 def parse_keys(raw_input):
     return [k.strip() for k in re.split(r'[,;\s]+', raw_input) if k.strip()]
 
@@ -299,13 +384,12 @@ def generate_report(topic, lang, pages, student, dept, teacher, notes, academic_
     if notes.strip():
         notes_prompt_part = f"""
         =======================================================
-        ⚠️ USER SPECIFIC INSTRUCTIONS & DIRECTIVES:
+        ⚠️ CRITICAL USER INSTRUCTIONS:
         "{notes.strip()}"
         
-        STRICT RULES FOR THESE INSTRUCTIONS:
-        1. DO NOT print, copy, paste, or quote these user instructions anywhere inside the report text or slides.
-        2. If the user asked to focus on a certain concept or angle, weave it smoothly into the academic analysis.
-        3. If the user mentioned styling (e.g. font size, text color, slide theme, dark/light theme, accent colors), EXTRACT and MAP them into the "styling" JSON object below. Convert any requested color names into valid 6-character HEX strings (e.g. Blue -> #1E3A8A, Navy -> #0F172A, Gold -> #D97706, Green -> #15803D, Red -> #B91C1C, Dark Gray -> #1E293B).
+        RULES:
+        1. DO NOT print, quote, or copy these user instructions as literal text inside the report or slides.
+        2. Apply the requested scholarly angle, topics, and specific font sizes/colors into the JSON configuration below.
         =======================================================
         """
         
@@ -327,19 +411,16 @@ def generate_report(topic, lang, pages, student, dept, teacher, notes, academic_
     1. Write everything inside strictly in {lang} (except English query for image search).
     2. Write scholarly, rich paragraphs for EACH section inside "sections".
     3. Exactly {s_count} slides inside "slides".
-    4. Provide the "styling" object based on the user's styling instructions, or use modern default values if not specified.
+    4. Provide the "styling" object based on user notes if given, otherwise keep default aesthetic values.
 
     Return strictly a valid JSON object matching this schema:
     {{
         "styling": {{
-            "word_title_color_hex": "#152342",
+            "word_title_color_hex": "#0F172A",
             "word_body_color_hex": "#1E293B",
             "word_primary_theme_hex": "#1E3A8A",
             "word_title_size_pt": 24,
             "word_body_size_pt": 14,
-            "slide_bg_color_hex": "#0F172A",
-            "slide_accent_color_hex": "#F59E0B",
-            "slide_text_color_hex": "#FFFFFF",
             "slide_title_size_pt": 26,
             "slide_body_size_pt": 18
         }},
@@ -386,7 +467,6 @@ def generate_report(topic, lang, pages, student, dept, teacher, notes, academic_
 def build_docx(data, student, dept, teacher, is_rtl, with_border=True, user_logo_bytes=None, academic_lvl=""):
     styling = data.get("styling", {})
     
-    # دەرهێنانا رەنگ و قەبارەیێن دیارکری ژ لایێ بەکارهێنەری ڤە
     title_color_rgb = hex_to_rgb(styling.get("word_title_color_hex"), (15, 23, 42))
     body_color_rgb = hex_to_rgb(styling.get("word_body_color_hex"), (30, 41, 59))
     theme_hex = styling.get("word_primary_theme_hex", "#1E3A8A")
@@ -568,25 +648,22 @@ def build_docx(data, student, dept, teacher, is_rtl, with_border=True, user_logo
 def build_pptx(data, student, dept, teacher, is_rtl):
     styling = data.get("styling", {})
     
-    # دیاریکردنا رەنگ و قەبارەیێن سلایدان
-    bg_rgb = hex_to_rgb(styling.get("slide_bg_color_hex"), (15, 23, 42))
-    accent_rgb = hex_to_rgb(styling.get("slide_accent_color_hex"), (245, 158, 11))
-    text_rgb = hex_to_rgb(styling.get("slide_text_color_hex"), (255, 255, 255))
+    # ڤەگەڕاندنا دیزاینێ سەرەکی یێ شاهانە (Dark Midnight Slate & Amber Gold)
+    DARK_BG = PptxRGBColor(15, 23, 42)      # رەنگێ بنەما یێ تاری یێ ئەکادیمی
+    ACCENT_GOLD = PptxRGBColor(245, 158, 11) # ئاڵتونی گەش بۆ ناڤونیشانان
+    WHITE = PptxRGBColor(255, 255, 255)
+    LIGHT_GRAY = PptxRGBColor(203, 213, 225)
+    CARD_BG = PptxRGBColor(30, 41, 59)      # سندوقا رێکوپێک یا ناڤەرۆکێ
     
     title_size_pt = int(styling.get("slide_title_size_pt", 26))
     body_size_pt = int(styling.get("slide_body_size_pt", 18))
-    
-    DARK_BG = PptxRGBColor(*bg_rgb)
-    ACCENT_GOLD = PptxRGBColor(*accent_rgb)
-    WHITE = PptxRGBColor(*text_rgb)
-    LIGHT_GRAY = PptxRGBColor(203, 213, 225)
-    CARD_BG = PptxRGBColor(min(bg_rgb[0] + 15, 255), min(bg_rgb[1] + 18, 255), min(bg_rgb[2] + 25, 255))
 
     prs = Presentation()
     prs.slide_width = PptxInches(13.333)
     prs.slide_height = PptxInches(7.5)
     blank_layout = prs.slide_layouts[6]
     
+    # ------------------ لاپەڕێ پێشەکی (Cover Slide) ------------------
     s1 = prs.slides.add_slide(blank_layout)
     bg1 = s1.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, prs.slide_width, prs.slide_height)
     bg1.fill.solid()
@@ -624,8 +701,12 @@ def build_pptx(data, student, dept, teacher, is_rtl):
     if is_rtl: 
         p_inf._pPr.set('rtl', '1')
     
+    # زێدەکرنا ئەنیمەیشنا گواستنەوەیا نەرم بۆ سلایدێ ئێکێ
+    apply_slide_transition_and_animations(s1, None, 0)
+    
     main_en_topic = data.get("main_en_topic", "")
     
+    # ------------------ سلایدێن ناڤەرۆکێ (Content Slides) ------------------
     for idx_s, s_item in enumerate(data.get("slides", [])):
         sl = prs.slides.add_slide(blank_layout)
         bg = sl.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, prs.slide_width, prs.slide_height)
@@ -657,17 +738,19 @@ def build_pptx(data, student, dept, teacher, is_rtl):
         else:
             text_left, text_width = PptxInches(1.5), PptxInches(10.333)
             
+        # چوارچێوەیێ سندوقێ یێ ئاڵتونی
         card = sl.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, text_left, PptxInches(1.8), text_width, PptxInches(5.0))
         card.fill.solid()
         card.fill.fore_color.rgb = CARD_BG
         card.line.color.rgb = ACCENT_GOLD
-        card.line.width = PptxPt(1)
+        card.line.width = PptxPt(1.2)
         
         c_box = sl.shapes.add_textbox(text_left + PptxInches(0.3), PptxInches(2.0), text_width - PptxInches(0.6), PptxInches(4.6))
         c_frame = c_box.text_frame
         c_frame.word_wrap = True
         
-        for idx, pt in enumerate(s_item.get("bullet_points", [])):
+        pts = s_item.get("bullet_points", [])
+        for idx, pt in enumerate(pts):
             para = c_frame.paragraphs[0] if idx == 0 else c_frame.add_paragraph()
             para.text = f"•  {convert_numbers(pt, is_rtl)}"
             para.font.size = PptxPt(body_size_pt)
@@ -682,6 +765,9 @@ def build_pptx(data, student, dept, teacher, is_rtl):
                 sl.shapes.add_picture(img_data, img_left, img_top, width=img_width)
             except Exception:
                 pass
+        
+        # جێبەجێکرنا ئەنیمەیشنا گواستنەوەیا نەرم + دەرکەفتنا خاڵان ب کلیکێ
+        apply_slide_transition_and_animations(sl, c_box.shape_id, len(pts))
             
     bio = io.BytesIO()
     prs.save(bio)
