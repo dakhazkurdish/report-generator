@@ -214,12 +214,12 @@ def parse_keys(raw_input):
     return [k.strip() for k in re.split(r'[,;\s]+', raw_input) if k.strip()]
 
 def call_gemini(prompt, keys_list, as_json=True):
-    # مۆدێلێن چالاک و بەردەست یێن نوی
+    # دانانا gemini-3.5-flash ل سەری هەمی مۆدێلان دگەل ئەلتەرناتیڤێن نوێ
     candidate_models = [
-        "gemini-3.8-flash",
+        "gemini-3.5-flash",
+        "gemini-3.5-turbo",
         "gemini-3.1-pro-preview",
-        "gemini-2.0-flash",
-        "gemini-1.5-flash"
+        "gemini-2.5-flash"
     ]
     
     headers = {"Content-Type": "application/json"}
@@ -236,7 +236,7 @@ def call_gemini(prompt, keys_list, as_json=True):
         for model_name in candidate_models:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={current_key}"
             
-            # هەوڵدانا دووبارە بۆ چارەسەرکرنا خەلەتیا 503
+            # هەوڵدانا دووبارە بۆ چارەسەرکرنا خەلەتیا 503 (سێرڤەری قەرەباڵغ)
             for attempt in range(2):
                 try:
                     res = requests.post(url, headers=headers, json=payload, timeout=90)
@@ -246,10 +246,10 @@ def call_gemini(prompt, keys_list, as_json=True):
                         return json.loads(text_content) if as_json else text_content
                     elif res.status_code in [503, 429]:
                         last_error = f"{res.status_code}: سێرڤەر قەرەباڵغە ({model_name})"
-                        time.sleep(3)
+                        time.sleep(3)  # ڕاوەستان بۆ ئارامبوونا سێرڤەری
                         continue
                     elif res.status_code == 404:
-                        # ئەگەر مۆدێل نەما بیت بچۆ سەر مۆدێلێ دواتر بێ وەستان
+                        # ئەگەر مۆدێل بەردەست نەبوو یان نەهاتە دیتن، بێ وەستان بچۆ مۆدێلێ دواتر
                         last_error = res.text
                         break
                     else:
