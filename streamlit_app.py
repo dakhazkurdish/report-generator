@@ -5,6 +5,7 @@ import io
 import urllib.parse
 import re
 import time
+import zipfile
 
 from docx import Document
 from docx.shared import Pt, Inches, RGBColor
@@ -26,7 +27,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# ڤەشارتنا هەمی مێنیو و بارێن سێرڤەری
+# ڤەشارتنا هەمی مێنیو و بارێن سێرڤەری و ستایلێ گشتی
 st.markdown("""
     <style>
     #MainMenu {visibility: hidden !important; display: none !important;}
@@ -62,8 +63,8 @@ if not raw_api_key:
 with st.container():
     col1, col2 = st.columns(2)
     with col1:
-        student_name = st.text_input("👤 ناڤێ قوتابی:")
-        department = st.text_input("🏛️ پەیمانگەهـ یان کۆلێژ / پشک:")
+        student_name = st.text_input("👤 ناڤێ قوتابی:", placeholder="ناڤێ سیانی...")
+        department = st.text_input("🏛️ پەیمانگەهـ یان کۆلێژ / پشک:", placeholder="کۆلێژا... پشکا...")
         language = st.selectbox("🌐 زمانێ نڤیسینێ:", ["کوردی (بادینی)", "کوردی (سۆرانی)", "العربية", "English"])
         academic_level = st.selectbox(
             "🎓 ئاستێ ئەکادیمی یێ لێکۆڵینەوەیێ:",
@@ -74,9 +75,9 @@ with st.container():
             ]
         )
     with col2:
-        teacher_name = st.text_input("👨‍🏫 ناڤێ مامۆستایێ بابەتی:")
-        topic = st.text_input("📝 بابەتێ سەرەکی یێ ڕاپۆرتێ:")
-        pages_count = st.slider("📄 ژمارا لاپەڕێن پێدڤی بۆ ڕاپۆرتێ:", min_value=3, max_value=25, value=12)
+        teacher_name = st.text_input("👨‍🏫 ناڤێ مامۆستایێ بابەتی:", placeholder="ناڤێ مامۆستایێ سەرپەرشت...")
+        topic = st.text_input("📝 بابەتێ سەرەکی یێ ڕاپۆرتێ:", placeholder="بابەتێ ڤەکۆلینێ یان سمینارێ بنڤیسە...")
+        pages_count = st.slider("📄 ژمارا لاپەڕێن پێدڤی بۆ ڕاپۆرتێ:", min_value=3, max_value=25, value=10)
         slides_count = st.slider("📊 ژمارا سلایدێن پاوەرپۆینتێ (Seminar):", min_value=4, max_value=15, value=6)
 
 col_sub1, col_sub2 = st.columns(2)
@@ -87,7 +88,7 @@ with col_sub2:
 
 custom_notes = st.text_area(
     "💡 فەرمان و تێبینیێن تایبەت (ئەڤ فەرمانە دێ ڕاستەوخۆ هێنە جێبەجێکرن، بێی کو دەق بچیتە ناڤ ڕاپۆرتێ):",
-    placeholder="بۆ نموونە: قەبارێ خەتێ سەرەکی ٢٦ بیت، گرنگیێ بدە لایەنێ کرداری و کۆمەلایەتی، بەراوردکرنێ ل ناڤدا بکە...",
+    placeholder="بۆ نموونە: تیشکێ بێخە سەر مێژوویا بابەتی، نموونەیێن پراکتیکی زێدە بکە، قەبارێ خەتێ سەرەکی ٢٨ بیت...",
     height=80
 )
 
@@ -204,7 +205,12 @@ def fetch_slide_image(keyword, topic_context=""):
         pass
     return None
 
-def apply_slide_transition_and_animations(slide, text_shape_id=None, num_points=0):
+def apply_slide_transition_and_animations(slide, text_shape_id=None, num_points=0, slide_index=1):
+    """
+    زێدەکرنا ئەنیمەیشنا گواستنەوەیا سلایدان (Transition Fade)
+    دگەل دەرکەفتنا خاڵان ب کلیکێ ب بکارئینانا ID یێن بێ هاوتا (Unique ID) داکو PPTX تێک نەچیت.
+    """
+    # 1. گواستنەوەیا نەرم یا سلایدێ
     transition_xml = parse_xml(r'''
         <p:transition xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" spd="med">
             <p:fade/>
@@ -215,10 +221,12 @@ def apply_slide_transition_and_animations(slide, text_shape_id=None, num_points=
     if not text_shape_id or num_points <= 0:
         return
 
+    # بۆ هەر سلایدەکی بنەمایەکێ ID یێ جودا دادەنێین تا لەگەڵ سلایدێن تر تێکەڵ نەبیت
+    base_id = slide_index * 1000
     child_nodes = []
-    base_id = 100
+    
     for idx in range(num_points):
-        c_tn_id = base_id + (idx * 3) + 1
+        c_tn_id = base_id + (idx * 4) + 1
         inner_id1 = c_tn_id + 1
         
         p_node = f'''
@@ -254,14 +262,17 @@ def apply_slide_transition_and_animations(slide, text_shape_id=None, num_points=
 
     all_children_xml = "".join(child_nodes)
 
+    root_id = base_id + 500
+    seq_id = base_id + 501
+
     timing_xml = parse_xml(rf'''
     <p:timing xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
         <p:tnLst>
             <p:par>
-                <p:cTn id="1" dur="indefinite" restart="always" nodeType="tmRoot">
+                <p:cTn id="{root_id}" dur="indefinite" restart="always" nodeType="tmRoot">
                     <p:childTnLst>
                         <p:seq concurrent="1" nextAc="seek">
-                            <p:cTn id="2" dur="indefinite" nodeType="mainSeq">
+                            <p:cTn id="{seq_id}" dur="indefinite" nodeType="mainSeq">
                                 <p:childTnLst>
                                     {all_children_xml}
                                 </p:childTnLst>
@@ -296,27 +307,6 @@ def extract_clean_json(text):
         return json.loads(text[start:end+1])
     return json.loads(text.strip())
 
-@st.cache_data(ttl=3600)
-def discover_active_models(api_key):
-    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
-    try:
-        res = requests.get(url, timeout=8)
-        if res.status_code == 200:
-            models_data = res.json().get("models", [])
-            valid_models = []
-            for m in models_data:
-                methods = m.get("supportedGenerationMethods", [])
-                if "generateContent" in methods:
-                    clean_name = m.get("name", "").replace("models/", "")
-                    valid_models.append(clean_name)
-            
-            flash_models = [m for m in valid_models if "flash" in m.lower() and not any(x in m.lower() for x in ["tts", "image", "live"])]
-            pro_models = [m for m in valid_models if "pro" in m.lower() and not any(x in m.lower() for x in ["tts", "image", "live"])]
-            return flash_models + pro_models + valid_models
-    except Exception:
-        pass
-    return ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
-
 def call_gemini(prompt, keys_list, status_text=None):
     headers = {"Content-Type": "application/json"}
     payload = {
@@ -327,10 +317,11 @@ def call_gemini(prompt, keys_list, status_text=None):
         }
     }
     
+    # مۆدێلێن لەز و فەرمی یێن سەقامگیر بێ لۆدێ زێدە یێ دەستپێکی
+    candidate_models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
     last_error = ""
+    
     for key_idx, current_key in enumerate(keys_list):
-        candidate_models = discover_active_models(current_key)
-        
         for model_name in candidate_models:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={current_key}"
             max_retries = 2
@@ -372,8 +363,7 @@ def call_gemini(prompt, keys_list, status_text=None):
     raise Exception(f"{last_error} - تکایە چەند خولەکان بێهنڤەدە یان کلیلەکا دی یا Gemini زێدە بکە.")
 
 def generate_report(topic, lang, pages, student, dept, teacher, notes, academic_lvl, s_count, keys_list, progress_bar, status_text):
-    # ژمارا بەشان ب شێوەیەکێ دروست بۆ پڕکرنا هەمی لاپەڕێن داخوازیار بەرفرهـ دبیت
-    # بۆ نموونە: ئەگەر ١٢ بەرپەر بن، دێ ٨ بۆ ١٠ بەشێن تێر و تەسەل دروست بن
+    # ژمارا بەشان ب شێوەیەکێ دروست بۆ پڕکرنا هەمی لاپەڕان دیار دکەین
     num_sections = max(4, min(14, pages - 2))
     
     notes_prompt_part = ""
@@ -383,9 +373,9 @@ def generate_report(topic, lang, pages, student, dept, teacher, notes, academic_
         🚨 SUPREME USER DIRECTIVES (HIGHEST PRIORITY):
         "{notes.strip()}"
         
-        MANDATORY RULES FOR USER DIRECTIVES:
-        1. UNDER NO CIRCUMSTANCES should you write or quote these directives as literal text.
-        2. Strictly adapt the contents, deep discussions, academic angles, and focus areas to fully satisfy these directives.
+        MANDATORY RULES:
+        1. DO NOT print, quote, or display these instructions as raw text in the report or slides.
+        2. Strictly adapt the contents, deep discussions, academic angles, and focus areas to satisfy these directives.
         3. Extract any styling overrides (font size, colors) into the "styling" JSON object.
         =======================================================
         """
@@ -394,12 +384,12 @@ def generate_report(topic, lang, pages, student, dept, teacher, notes, academic_
     progress_bar.progress(35)
     
     prompt = f"""
-    You are an elite professor and academic researcher tasked with writing a COMPREHENSIVE, HIGH-VOLUME academic research report.
+    You are an elite professor and academic researcher tasked with writing a COMPREHENSIVE, HIGH-VOLUME academic research report and seminar presentation.
     Topic: "{topic}".
     Language: Strictly in {lang}.
     Academic Level: {academic_lvl}.
     Target Page Volume: EXACTLY {pages} pages in Microsoft Word.
-    Student: "{student}", Department: "{dept}", Supervisor: "{teacher}".
+    Student: "{student or 'قوتابی'}", Department: "{dept or 'زانکۆ'}", Supervisor: "{teacher or 'مامۆستایێ سەرپەرشت'}".
     Required Presentation Slides: EXACTLY {s_count} slides.
 
     {notes_prompt_part}
@@ -429,7 +419,7 @@ def generate_report(topic, lang, pages, student, dept, teacher, notes, academic_
         "sections": [
             {{
                 "heading": "Section Heading in {lang}",
-                "content": "Paragraph 1 (Deep academic intro and literature)...\\n\\nParagraph 2 (In-depth analysis, critical discussions, mechanisms)...\\n\\nParagraph 3 (Practical case studies, methodologies, empirical evidence)...\\n\\nParagraph 4 (Future perspectives, challenges, evaluation)..."
+                "content": "Paragraph 1...\\n\\nParagraph 2...\\n\\nParagraph 3...\\n\\nParagraph 4..."
             }}
         ],
         "conclusion": "Profound academic conclusion in 3 rich paragraphs in {lang}...",
@@ -475,7 +465,7 @@ def build_docx(data, student, dept, teacher, is_rtl, with_border=True, user_logo
 
     doc = Document()
     
-    # لاپەڕێ ڕووبەر (Cover Page)
+    # ------------------ بەرگێ ڕاپۆرتێ (Cover Page) ------------------
     section_cover = doc.sections[0]
     section_cover.top_margin = Inches(1)
     section_cover.bottom_margin = Inches(1)
@@ -497,7 +487,7 @@ def build_docx(data, student, dept, teacher, is_rtl, with_border=True, user_logo
     p_uni = doc.add_paragraph()
     set_docx_rtl(p_uni, is_rtl)
     p_uni.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run_dept = p_uni.add_run(convert_numbers(dept or "پەیمانگەهـ / زانکۆ", is_rtl))
+    run_dept = p_uni.add_run(convert_numbers(dept.strip() or ("پەیمانگەهـ / زانکۆ" if is_rtl else "University / College"), is_rtl))
     format_run(run_dept, size_pt=18, bold=True, color_rgb=theme_color_rgb, is_rtl=is_rtl)
     
     p_div = doc.add_paragraph()
@@ -516,19 +506,24 @@ def build_docx(data, student, dept, teacher, is_rtl, with_border=True, user_logo
     p_box = doc.add_paragraph()
     set_docx_rtl(p_box, is_rtl)
     p_box.paragraph_format.space_before = Pt(36)
+    
     lbl_s = "ئامادەکرن ژ لایێ قوتابی: " if is_rtl else "Prepared by: "
     lbl_t = "سەرپەرشتیا مامۆستا: " if is_rtl else "Supervised by: "
     lbl_l = "ئاستێ ئەکادیمی: " if is_rtl else "Academic Level: "
     
+    display_student = student.strip() if student else ("قوتابیێ بەڕێز" if is_rtl else "Student")
+    display_teacher = teacher.strip() if teacher else ("مامۆستایێ بابەتی" if is_rtl else "Supervisor")
+    display_level = academic_lvl.split('(')[0].strip() if academic_lvl else ("ئەکادیمی" if is_rtl else "Academic")
+
     r_meta = p_box.add_run(
-        f"📋 {lbl_s}{student or '-'}\n\n"
-        f"👨‍🏫 {lbl_t}{teacher or '-'}\n\n"
-        f"🎓 {lbl_l}{academic_lvl.split('(')[0].strip() or 'ئەکادیمی'}\n\n"
+        f"📋 {lbl_s}{display_student}\n\n"
+        f"👨‍🏫 {lbl_t}{display_teacher}\n\n"
+        f"🎓 {lbl_l}{display_level}\n\n"
         f"📅 ساڵا ئەکادیمی: {convert_numbers('2025 - 2026', is_rtl)}"
     )
     format_run(r_meta, size_pt=14, bold=True, color_rgb=(51, 65, 85), is_rtl=is_rtl)
     
-    # لاپەڕێن ناڤەرۆکێ (Body Section)
+    # ------------------ بەشێ ناڤەرۆکێ (Body Section) ------------------
     section_body = doc.add_section()
     section_body.top_margin = Inches(1)
     section_body.bottom_margin = Inches(1)
@@ -539,6 +534,7 @@ def build_docx(data, student, dept, teacher, is_rtl, with_border=True, user_logo
         add_page_borders(section_body, border_color_hex=theme_hex)
     add_page_number_to_section(section_body, is_rtl)
     
+    # پوختە (Abstract)
     p_abs_h = doc.add_paragraph()
     set_docx_rtl(p_abs_h, is_rtl)
     r_abs_h = p_abs_h.add_run("پوختە (Abstract)" if is_rtl else "Abstract")
@@ -552,19 +548,35 @@ def build_docx(data, student, dept, teacher, is_rtl, with_border=True, user_logo
     
     doc.add_page_break()
     
-    # پێڕستا ناڤەرۆکێ (Table of Contents)
+    # ------------------ پێڕست دگەل ژمارەیێن ڕاستەقینە ------------------
     p_toc_h = doc.add_paragraph()
     set_docx_rtl(p_toc_h, is_rtl)
     r_toc_h = p_toc_h.add_run("پێڕستا ناڤەرۆکێ (Table of Contents)" if is_rtl else "Table of Contents")
     format_run(r_toc_h, size_pt=16, bold=True, color_rgb=title_color_rgb, is_rtl=is_rtl)
     
-    toc_items = ["پوختە (Abstract)"]
-    for idx, s in enumerate(data.get("sections", [])):
-        toc_items.append(f"{idx+1}. {s.get('heading', '')}")
-    toc_items.append("دەرئەنجام (Conclusion)")
-    toc_items.append("سەرچاوەکان (References)")
+    sections_list = data.get("sections", [])
     
-    table = doc.add_table(rows=len(toc_items) + 1, cols=2)
+    # هەژمارکردنا لاپەڕێن ڕاستەقینە:
+    # بەرپەرێ ١: بەرگ
+    # بەرپەرێ ٢: پوختە (Abstract)
+    # بەرپەرێ ٣: پێڕست (Table of Contents)
+    # دەستپێکا تەوەران ژ بەرپەرێ ٤ دەستپێدکەت
+    toc_data_map = [("پوختە (Abstract)" if is_rtl else "Abstract", 2)]
+    running_page = 4
+    
+    for idx, s in enumerate(sections_list):
+        heading_text = f"{idx+1}. {s.get('heading', '')}"
+        toc_data_map.append((heading_text, running_page))
+        # هەژمارکرنا لاپەڕان: هەر تەوەرەک ل دووڤ درێژییا خوە ١ تا ٢ لاپەڕان دگریت
+        paras_count = len([p for p in s.get('content', '').split("\n\n") if p.strip()])
+        pages_for_this_sec = max(1, paras_count // 3)
+        running_page += pages_for_this_sec
+
+    toc_data_map.append(("دەرئەنجام (Conclusion)" if is_rtl else "Conclusion", running_page))
+    running_page += 1
+    toc_data_map.append(("سەرچاوەکان (References)" if is_rtl else "References", running_page))
+    
+    table = doc.add_table(rows=len(toc_data_map) + 1, cols=2)
     table.alignment = WD_TABLE_ALIGNMENT.CENTER
     table.autofit = False
     
@@ -580,8 +592,7 @@ def build_docx(data, student, dept, teacher, is_rtl, with_border=True, user_logo
     set_docx_rtl(p_h1, is_rtl)
     format_run(p_h1.add_run("لاپەڕە" if is_rtl else "Page"), size_pt=13, bold=True, color_rgb=title_color_rgb, is_rtl=is_rtl)
     
-    current_page_counter = 2
-    for r_idx, item_title in enumerate(toc_items):
+    for r_idx, (item_title, item_page) in enumerate(toc_data_map):
         row_cells = table.rows[r_idx + 1].cells
         row_cells[0].width = Inches(5.0)
         row_cells[1].width = Inches(1.5)
@@ -592,14 +603,11 @@ def build_docx(data, student, dept, teacher, is_rtl, with_border=True, user_logo
         
         p_c1 = row_cells[1].paragraphs[0]
         set_docx_rtl(p_c1, is_rtl)
-        format_run(p_c1.add_run(convert_numbers(str(current_page_counter), is_rtl)), size_pt=12, bold=True, color_rgb=(37, 99, 235), is_rtl=is_rtl)
-        
-        current_page_counter += 1
+        format_run(p_c1.add_run(convert_numbers(str(item_page), is_rtl)), size_pt=12, bold=True, color_rgb=(37, 99, 235), is_rtl=is_rtl)
         
     doc.add_page_break()
     
-    # تەوەر و بەشێن سەرەکی (Sections)
-    sections_list = data.get("sections", [])
+    # ------------------ تەوەرێن سەرەکی (Main Sections) ------------------
     for idx, sec in enumerate(sections_list):
         p_sec_h = doc.add_paragraph()
         set_docx_rtl(p_sec_h, is_rtl)
@@ -619,13 +627,12 @@ def build_docx(data, student, dept, teacher, is_rtl, with_border=True, user_logo
             r_sec = p_sec.add_run(convert_numbers(p_t.strip(), is_rtl))
             format_run(r_sec, size_pt=body_size, bold=False, color_rgb=body_color_rgb, is_rtl=is_rtl)
             
-        # دابەشکرنا بەشان ل سەر لاپەڕان داکو ڕاپۆرت ب دروستی درێژ بیت
         if idx < len(sections_list) - 1:
             doc.add_page_break()
             
     doc.add_page_break()
     
-    # دەرئەنجام (Conclusion)
+    # ------------------ دەرئەنجام (Conclusion) ------------------
     p_con_h = doc.add_paragraph()
     set_docx_rtl(p_con_h, is_rtl)
     p_con_h.paragraph_format.space_before = Pt(22)
@@ -646,7 +653,7 @@ def build_docx(data, student, dept, teacher, is_rtl, with_border=True, user_logo
     
     doc.add_page_break()
     
-    # سەرچاوەکان (References)
+    # ------------------ سەرچاوەکان (References) ------------------
     p_ref_h = doc.add_paragraph()
     set_docx_rtl(p_ref_h, is_rtl)
     p_ref_h.paragraph_format.space_before = Pt(24)
@@ -669,6 +676,7 @@ def build_docx(data, student, dept, teacher, is_rtl, with_border=True, user_logo
 def build_pptx(data, student, dept, teacher, is_rtl):
     styling = data.get("styling", {})
     
+    # دیزاینێ شاهانە یێ پاوەرپۆینتێ (Dark Slate + Amber Gold)
     DARK_BG = PptxRGBColor(15, 23, 42)
     ACCENT_GOLD = PptxRGBColor(245, 158, 11)
     WHITE = PptxRGBColor(255, 255, 255)
@@ -683,7 +691,7 @@ def build_pptx(data, student, dept, teacher, is_rtl):
     prs.slide_height = PptxInches(7.5)
     blank_layout = prs.slide_layouts[6]
     
-    # سلایدێ سەرەکی
+    # ------------------ سلایدێ بەرگی (Cover Slide) ------------------
     s1 = prs.slides.add_slide(blank_layout)
     bg1 = s1.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, prs.slide_width, prs.slide_height)
     bg1.fill.solid()
@@ -704,7 +712,7 @@ def build_pptx(data, student, dept, teacher, is_rtl):
         p_t._pPr.set('rtl', '1')
     
     p_sub = tf1.add_paragraph()
-    p_sub.text = convert_numbers(f"{dept or 'پەیمانگەهـ / زانکۆ'}", is_rtl)
+    p_sub.text = convert_numbers(f"{dept.strip() or ('پەیمانگەهـ / زانکۆ' if is_rtl else 'University')}", is_rtl)
     p_sub.font.size = PptxPt(20)
     p_sub.font.color.rgb = WHITE
     p_sub.alignment = PP_ALIGN.RIGHT if is_rtl else PP_ALIGN.LEFT
@@ -714,18 +722,22 @@ def build_pptx(data, student, dept, teacher, is_rtl):
     p_inf = tf1.add_paragraph()
     lbl_s = "قوتابی: " if is_rtl else "Student: "
     lbl_t = " | مامۆستا: " if is_rtl else " | Lecturer: "
-    p_inf.text = convert_numbers(f"\n{lbl_s}{student or '-'} {lbl_t}{teacher or '-'}", is_rtl)
+    s_val = student.strip() if student else ("قوتابی" if is_rtl else "Student")
+    t_val = teacher.strip() if teacher else ("سەرپەرشت" if is_rtl else "Lecturer")
+    p_inf.text = convert_numbers(f"\n{lbl_s}{s_val} {lbl_t}{t_val}", is_rtl)
     p_inf.font.size = PptxPt(16)
     p_inf.font.color.rgb = LIGHT_GRAY
     p_inf.alignment = PP_ALIGN.RIGHT if is_rtl else PP_ALIGN.LEFT
     if is_rtl: 
         p_inf._pPr.set('rtl', '1')
     
-    apply_slide_transition_and_animations(s1, None, 0)
+    apply_slide_transition_and_animations(s1, None, 0, slide_index=1)
     
     main_en_topic = data.get("main_en_topic", "")
     
+    # ------------------ سلایدێن ناڤەرۆکێ (Content Slides) ------------------
     for idx_s, s_item in enumerate(data.get("slides", [])):
+        slide_order = idx_s + 2
         sl = prs.slides.add_slide(blank_layout)
         bg = sl.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, prs.slide_width, prs.slide_height)
         bg.fill.solid()
@@ -783,8 +795,32 @@ def build_pptx(data, student, dept, teacher, is_rtl):
             except Exception:
                 pass
         
-        apply_slide_transition_and_animations(sl, c_box.shape_id, len(pts))
+        # جێبەجێکرنا ئەنیمەیشنا خاڵان ب ID یێن جودا بۆ پاراستنا فایلی ژ تێکچوونێ
+        apply_slide_transition_and_animations(sl, c_box.shape_id, len(pts), slide_index=slide_order)
             
+    # ------------------ سلایدێ دووماهیێ (Thank You Slide) ------------------
+    s_end = prs.slides.add_slide(blank_layout)
+    bg_end = s_end.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, prs.slide_width, prs.slide_height)
+    bg_end.fill.solid()
+    bg_end.fill.fore_color.rgb = DARK_BG
+    bg_end.line.fill.background()
+    
+    end_box = s_end.shapes.add_textbox(PptxInches(2), PptxInches(2.5), PptxInches(9.333), PptxInches(2.5))
+    end_frame = end_box.text_frame
+    p_end1 = end_frame.paragraphs[0]
+    p_end1.text = "سوپاس بۆ گوهداریا هەوە" if is_rtl else "Thank You For Your Attention"
+    p_end1.font.size = PptxPt(40)
+    p_end1.font.bold = True
+    p_end1.font.color.rgb = ACCENT_GOLD
+    p_end1.alignment = PP_ALIGN.CENTER
+    
+    p_end2 = end_frame.add_paragraph()
+    p_end2.text = "دەرفەت بۆ پرسیار و سەرنجێن هەوە" if is_rtl else "Q & A Session"
+    p_end2.font.size = PptxPt(22)
+    p_end2.font.color.rgb = WHITE
+    p_end2.alignment = PP_ALIGN.CENTER
+    apply_slide_transition_and_animations(s_end, None, 0, slide_index=len(data.get("slides", [])) + 2)
+
     bio = io.BytesIO()
     prs.save(bio)
     bio.seek(0)
@@ -793,8 +829,8 @@ def build_pptx(data, student, dept, teacher, is_rtl):
 def build_plain_text(data, student, dept, teacher, is_rtl):
     txt = f"=========================================\n"
     txt += f"{data.get('title', 'ڕاپۆرت')}\n"
-    txt += f"پەیمانگەهـ / زانکۆ: {dept}\n"
-    txt += f"قوتابی: {student} | سەرپەرشتیا: {teacher}\n"
+    txt += f"پەیمانگەهـ / زانکۆ: {dept or '-'}\n"
+    txt += f"قوتابی: {student or '-'} | سەرپەرشتیا: {teacher or '-'}\n"
     txt += f"=========================================\n\n"
     txt += f"پوختە (Abstract):\n{data.get('abstract', '')}\n\n"
     for idx, sec in enumerate(data.get("sections", [])):
@@ -809,6 +845,16 @@ def build_plain_text(data, student, dept, teacher, is_rtl):
     for ref in data.get("references", []):
         txt += f"• {ref}\n"
     return convert_numbers(txt, is_rtl)
+
+def build_zip_package(docx_bytes, pptx_bytes, topic_name):
+    """دروستکرنا فایلا ZIP کو هەردوو بەڵگەنامەیان پێکڤە دگریتە خوە"""
+    zip_buffer = io.BytesIO()
+    safe_topic = re.sub(r'[\/*?:"<>|]', '_', topic_name).strip() or "academic_project"
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+        zip_file.writestr(f"{safe_topic}_report.docx", docx_bytes)
+        zip_file.writestr(f"{safe_topic}_presentation.pptx", pptx_bytes)
+    zip_buffer.seek(0)
+    return zip_buffer.getvalue()
 
 is_rtl_lang = language != "English"
 
@@ -830,14 +876,18 @@ if st.button("🚀 دروستکرنا ڕاپۆرت و سمینارێ", type="pri
             
             user_logo_data = uploaded_logo.read() if uploaded_logo else None
             
-            st.session_state["docx_file"] = build_docx(
+            docx_data = build_docx(
                 content, student_name, department, teacher_name, 
                 is_rtl_lang, enable_border, user_logo_data, academic_level
             ).getvalue()
             
-            st.session_state["pptx_file"] = build_pptx(
+            pptx_data = build_pptx(
                 content, student_name, department, teacher_name, is_rtl_lang
             ).getvalue()
+            
+            st.session_state["docx_file"] = docx_data
+            st.session_state["pptx_file"] = pptx_data
+            st.session_state["zip_file"] = build_zip_package(docx_data, pptx_data, topic)
             
             st.session_state["plain_text"] = build_plain_text(
                 content, student_name, department, teacher_name, is_rtl_lang
@@ -856,17 +906,28 @@ if st.button("🚀 دروستکرنا ڕاپۆرت و سمینارێ", type="pri
 
 if st.session_state.get("generated", False):
     st.markdown("### 📥 فایلێن خو داونلۆد بکە:")
+    
+    # دوگمەیا مەزن یا داگرتنا ZIP بۆ هەردوو فایلان ب ئێک کلیک
+    st.download_button(
+        label="📦 داگرتنا هەردوو فایلان پێکڤە ب فایلا لێکدراو (ZIP)",
+        data=st.session_state["zip_file"],
+        file_name=f"{st.session_state['topic_name']}_complete_pack.zip",
+        mime="application/zip",
+        use_container_width=True
+    )
+    
+    st.markdown("<br>", unsafe_allow_html=True)
     col_d1, col_d2 = st.columns(2)
     with col_d1:
         st.download_button(
-            label="📄 داگرتنا فایلا Word (دگەل پێڕست و ڕێکخستنا ئەکادیمی)",
+            label="📄 داگرتنا فایلا Word ب تەنێ",
             data=st.session_state["docx_file"],
             file_name=f"{st.session_state['topic_name']}_report.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
     with col_d2:
         st.download_button(
-            label="📊 داگرتنا فایلا PowerPoint (سلایدێن کوردی و وێنەیێن تایبەت)",
+            label="📊 داگرتنا فایلا PowerPoint ب تەنێ",
             data=st.session_state["pptx_file"],
             file_name=f"{st.session_state['topic_name']}_presentation.pptx",
             mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
