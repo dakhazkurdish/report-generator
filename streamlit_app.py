@@ -204,11 +204,12 @@ def extract_clean_json(text):
         return json.loads(text[start:end+1])
     return json.loads(text.strip())
 
+@st.cache_data(ttl=3600)
 def discover_active_models(api_key):
-    """دۆزینەوەیا ئۆتۆماتیکی یا مۆدێلێن چالاک ڕاستەوخۆ ژ خودێ گووگڵ"""
+    """دۆزینەوەیا مۆدێلان ب پاراستن (Cache) داکو داخوازی زێدە نەچنە سەر کلیلێ"""
     url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
     try:
-        res = requests.get(url, timeout=12)
+        res = requests.get(url, timeout=8)
         if res.status_code == 200:
             models_data = res.json().get("models", [])
             valid_models = []
@@ -218,16 +219,14 @@ def discover_active_models(api_key):
                     clean_name = m.get("name", "").replace("models/", "")
                     valid_models.append(clean_name)
             
-            # پێشینە بۆ مۆدێلێن لەز و فلاش
             flash_models = [m for m in valid_models if "flash" in m.lower() and not any(x in m.lower() for x in ["tts", "image", "live"])]
             pro_models = [m for m in valid_models if "pro" in m.lower() and not any(x in m.lower() for x in ["tts", "image", "live"])]
             return flash_models + pro_models + valid_models
     except Exception:
         pass
-    # ئەگەر نەهاتە دۆزینەوە، لیستا پاراستی
-    return ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-1.5-flash"]
+    return ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
 
-def call_gemini(prompt, keys_list):
+def call_gemini(prompt, keys_list, status_text=None):
     headers = {"Content-Type": "application/json"}
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
@@ -239,40 +238,53 @@ def call_gemini(prompt, keys_list):
     
     last_error = ""
     for key_idx, current_key in enumerate(keys_list):
-        # دۆزینەوەیا مۆدێلێن چالاک بۆ ڤێ کلیلێ ب تایبەتی
         candidate_models = discover_active_models(current_key)
         
         for model_name in candidate_models:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={current_key}"
-            try:
-                res = requests.post(url, headers=headers, json=payload, timeout=90)
-                if res.status_code == 200:
-                    data = res.json()
-                    candidates = data.get("candidates", [])
-                    if candidates and "content" in candidates[0]:
-                        parts = candidates[0]["content"].get("parts", [])
-                        if parts and "text" in parts[0]:
-                            return extract_clean_json(parts[0]["text"])
-                elif res.status_code in [429, 503]:
-                    last_error = f"کلیلا ({key_idx + 1}) قەرەباڵغە (429)، دەرباز دەبێتە سەر کلیلا دی..."
-                    break  # ئێکسەر دچیتە سەر کلیلا دی
-                elif res.status_code == 404:
-                    continue  # بچە سەر مۆدێلێ دویڤدا
-                else:
-                    try:
-                        err_detail = res.json().get("error", {}).get("message", res.text)
-                    except Exception:
-                        err_detail = res.text
-                    last_error = f"خەلەتیا API ({res.status_code}): {err_detail}"
+            
+            # هەوڵدانا دووبارە (Retry) ب کێمەک بێهنڤەدان ئەگەر 429 چێبوو
+            max_retries = 2
+            for attempt in range(max_retries):
+                try:
+                    res = requests.post(url, headers=headers, json=payload, timeout=90)
+                    
+                    if res.status_code == 200:
+                        data = res.json()
+                        candidates = data.get("candidates", [])
+                        if candidates and "content" in candidates[0]:
+                            parts = candidates[0]["content"].get("parts", [])
+                            if parts and "text" in parts[0]:
+                                return extract_clean_json(parts[0]["text"])
+                                
+                    elif res.status_code in [429, 503]:
+                        last_error = f"کلیلا ({key_idx + 1}) قەرەباڵغە (429 - Rate Limit)."
+                        if attempt < max_retries - 1:
+                            if status_text:
+                                status_text.write(f"⏳ کلیلا ({key_idx + 1}) گەهشتە سنورێ خولەکی، {3 * (attempt + 1)} چرکە چاڤەڕێ بە...")
+                            time.sleep(3 * (attempt + 1))
+                            continue
+                        else:
+                            break  # دەرباز بە سەر کلیلا دویڤدا
+                            
+                    elif res.status_code == 404:
+                        break  # مۆدێل بوونی نینە، بچە سەر مۆدێلێ دی
+                    else:
+                        try:
+                            err_detail = res.json().get("error", {}).get("message", res.text)
+                        except Exception:
+                            err_detail = res.text
+                        last_error = f"خەلەتیا API ({res.status_code}): {err_detail}"
+                        break
+                        
+                except requests.exceptions.Timeout:
+                    last_error = "دەمی وەڵامێ درێژ کێشا (Timeout)."
                     break
-            except requests.exceptions.Timeout:
-                last_error = "دەمی وەڵامێ درێژ کێشا (Timeout)، ئینتەرنێت لاوازە."
-                continue
-            except Exception as e:
-                last_error = str(e)
-                continue
-                
-    raise Exception(last_error or "پەیوەندی دروست نەبوو. تکایە پشتڕاست ببە کو کلیلا API یا دروستە.")
+                except Exception as e:
+                    last_error = str(e)
+                    break
+                    
+    raise Exception(f"{last_error} - تکایە چەند خولەکان بێهنڤەدە یان کلیلەکا دی یا Gemini زێدە بکە.")
 
 def generate_report(topic, lang, pages, student, dept, teacher, notes, academic_lvl, s_count, keys_list, progress_bar, status_text):
     num_sections = max(3, min(5, pages - 2))
@@ -329,7 +341,7 @@ def generate_report(topic, lang, pages, student, dept, teacher, notes, academic_
     }}
     """
     
-    result = call_gemini(prompt, keys_list)
+    result = call_gemini(prompt, keys_list, status_text)
     progress_bar.progress(85)
     status_text.write("فایلێن Word و PowerPoint دروست دبن...")
     
@@ -713,3 +725,11 @@ if st.session_state.get("generated", False):
     st.markdown("### 📋 دەقێ ڕاپۆرتێ بۆ کۆپیکردنا ڕاستەوخۆ:")
     st.caption("دشێی ڤی دەقی دیاربکەی (Ctrl+A پاشان Ctrl+C) و پەیست بکەیە ناڤ وۆردێ خو بێی داگرتن:")
     st.text_area("", value=st.session_state["plain_text"], height=400)
+```eof
+
+### ئەگەرێن سەرەکی و چارەسەری:
+1. **لۆدێ سەر کلیلێ (Rate Limits):** گووگڵ د پلانا بێبەرامبەر دا سنورەک ددانیت (مەسلەن ١٥ داخوازی د خولەکەکێ دا). ئەگەر تە ٢ کلیل هەبن و هەردوو زوو زوو هاتبنە بکارئینان، کۆدێ بەرێ ئێکسەر رادوەستیا.
+2. **چارەسەری د کۆدێ نوی دا:**
+   - فەنکشنا `discover_active_models` مە کریە `@st.cache_data` داکو هەروەخت داخوازا زێدە نەنێریت و کلیلێ ماندی نەکەت.
+   - سیستەمێ **Retry & Wait** هاتییە زێدەکرن، ئانکو ئەگەر 429 رویدا، چەند چرکەکان چاڤەڕێ دبیت و دووبارە هەوڵ ددەت بەری دەستبەردار ببیت.
+   - ئەگەر کێشە بەردەوام بوو، باشترین چارەسەر ئەوە ٣ بۆ ٤ کلیلێن جودا (ژ ئەکاونتێن جودا یێن گووگڵ) بینیت و ب کۆما (`,`) جودا بکەی.
