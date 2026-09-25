@@ -214,7 +214,12 @@ def parse_keys(raw_input):
     return [k.strip() for k in re.split(r'[,;\s]+', raw_input) if k.strip()]
 
 def call_gemini(prompt, keys_list, as_json=True):
-    target_model = "gemini-3.8-flash"
+    # ئەگەر مۆدێلێ ئێکێ قەرەباڵغ بوو (503)، یەکسەر مۆدێلێن دی تاقی دکەت
+    candidate_models = [
+        "gemini-3.8-flash",
+        "gemini-3.5-flash",
+        "gemini-3.1-pro-preview"
+    ]
     
     headers = {"Content-Type": "application/json"}
     payload = {
@@ -227,28 +232,31 @@ def call_gemini(prompt, keys_list, as_json=True):
     
     last_error = ""
     for current_key in keys_list:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{target_model}:generateContent?key={current_key}"
-        
-        # هەوڵدانا دووبارە دگەل وەستاندنا دەمی بۆ 429 و 503
-        for attempt in range(4):
-            try:
-                res = requests.post(url, headers=headers, json=payload, timeout=90)
-                if res.status_code == 200:
-                    result = res.json()
-                    text_content = result["candidates"][0]["content"]["parts"][0]["text"]
-                    return json.loads(text_content) if as_json else text_content
-                elif res.status_code in [429, 503]:
-                    last_error = f"{res.status_code}: {res.text}"
-                    wait_time = 8 * (attempt + 1)  # وەستان بۆ 8، پاشان 16، پاشان 24 چرکە
-                    time.sleep(wait_time)
-                    continue
-                else:
-                    last_error = res.text
-                    break
-            except Exception as e:
-                last_error = str(e)
-                time.sleep(3)
-                
+        for model_name in candidate_models:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={current_key}"
+            
+            # تا ٢ جاران بۆ هەر مۆدێلەکێ تاقی دکەت، ئەگەر هەر قەرەباڵغ بوو دچیتە سەر مۆدێلێ دواتر
+            for attempt in range(2):
+                try:
+                    res = requests.post(url, headers=headers, json=payload, timeout=90)
+                    if res.status_code == 200:
+                        result = res.json()
+                        text_content = result["candidates"][0]["content"]["parts"][0]["text"]
+                        return json.loads(text_content) if as_json else text_content
+                    elif res.status_code in [503, 429]:
+                        last_error = f"{res.status_code}: سێرڤەر قەرەباڵغە ل سەر ({model_name})"
+                        time.sleep(3)
+                        continue
+                    elif res.status_code == 404:
+                        last_error = f"{res.status_code}: مۆدێلێ {model_name} بەردەست نینە"
+                        break
+                    else:
+                        last_error = res.text
+                        break
+                except Exception as e:
+                    last_error = str(e)
+                    time.sleep(2)
+                    
     raise Exception(f"API Error: {last_error}")
 
 def generate_multi_step_report(topic, lang, pages, student, dept, teacher, notes, academic_lvl, s_count, keys_list, progress_bar, status_text):
@@ -301,8 +309,7 @@ def generate_multi_step_report(topic, lang, pages, student, dept, teacher, notes
     """
     plan = call_gemini(plan_prompt, keys_list, as_json=True)
     
-    # ٤ چرکە وەستان دا کو سنوورێ خولەکی یێ API دەرباز نەبیت
-    time.sleep(4)
+    time.sleep(3)
     
     sections = []
     sec_titles = plan.get("section_titles", [])
@@ -332,8 +339,7 @@ def generate_multi_step_report(topic, lang, pages, student, dept, teacher, notes
             "content": sec_content.strip()
         })
         
-        # وەستاندنا ٤ چرکەیان د ناڤبەرا تەوەراندا بۆ ڕێگری ل خەلەتیا 429
-        time.sleep(4)
+        time.sleep(3)
         
     status_text.write("قۆناغا ٣: دەرئەنجام و لیستا سەرچاوەیان (APA) دهێنە دارشتن...")
     progress_bar.progress(85)
@@ -382,7 +388,6 @@ def build_docx(data, student, dept, teacher, is_rtl, with_border=True, user_logo
     if with_border:
         add_page_borders(section_cover)
 
-    # ١. لاپەڕا سەرەکی (Cover Page)
     logo_data = io.BytesIO(user_logo_bytes) if user_logo_bytes else fetch_academic_logo(dept)
     if logo_data:
         p_logo = doc.add_paragraph()
@@ -426,7 +431,6 @@ def build_docx(data, student, dept, teacher, is_rtl, with_border=True, user_logo
     )
     format_run(r_meta, size_pt=14, bold=True, color_rgb=(51, 65, 85), is_rtl=is_rtl)
     
-    # ٢. بەشێ ناڤەرۆکێ و پێڕستێ
     section_body = doc.add_section()
     section_body.top_margin = Inches(1)
     section_body.bottom_margin = Inches(1)
@@ -437,7 +441,6 @@ def build_docx(data, student, dept, teacher, is_rtl, with_border=True, user_logo
         add_page_borders(section_body)
     add_page_number_to_section(section_body, is_rtl)
     
-    # Abstract
     p_abs_h = doc.add_paragraph()
     set_docx_rtl(p_abs_h, is_rtl)
     r_abs_h = p_abs_h.add_run("پوختە (Abstract)" if is_rtl else "Abstract")
@@ -451,7 +454,6 @@ def build_docx(data, student, dept, teacher, is_rtl, with_border=True, user_logo
     
     doc.add_page_break()
     
-    # پێڕستا ناڤەرۆکێ (Table of Contents)
     p_toc_h = doc.add_paragraph()
     set_docx_rtl(p_toc_h, is_rtl)
     r_toc_h = p_toc_h.add_run("پێڕستا ناڤەرۆکێ (Table of Contents)" if is_rtl else "Table of Contents")
@@ -497,7 +499,6 @@ def build_docx(data, student, dept, teacher, is_rtl, with_border=True, user_logo
         
     doc.add_page_break()
     
-    # Body Sections
     for idx, sec in enumerate(data.get("sections", [])):
         p_sec_h = doc.add_paragraph()
         set_docx_rtl(p_sec_h, is_rtl)
@@ -517,7 +518,6 @@ def build_docx(data, student, dept, teacher, is_rtl, with_border=True, user_logo
             r_sec = p_sec.add_run(convert_numbers(p_t.strip(), is_rtl))
             format_run(r_sec, size_pt=14, bold=False, color_rgb=(30, 41, 59), is_rtl=is_rtl)
             
-    # Conclusion
     p_con_h = doc.add_paragraph()
     set_docx_rtl(p_con_h, is_rtl)
     p_con_h.paragraph_format.space_before = Pt(22)
@@ -530,7 +530,6 @@ def build_docx(data, student, dept, teacher, is_rtl, with_border=True, user_logo
     r_con = p_con.add_run(convert_numbers(data.get("conclusion", ""), is_rtl))
     format_run(r_con, size_pt=14, bold=False, color_rgb=(30, 41, 59), is_rtl=is_rtl)
     
-    # References
     p_ref_h = doc.add_paragraph()
     set_docx_rtl(p_ref_h, is_rtl)
     p_ref_h.paragraph_format.space_before = Pt(24)
@@ -561,7 +560,6 @@ def build_pptx(data, student, dept, teacher, is_rtl):
     LIGHT_GRAY = PptxRGBColor(203, 213, 225)
     CARD_BG = PptxRGBColor(30, 41, 59)
     
-    # سلایدا ئێکێ
     s1 = prs.slides.add_slide(blank_layout)
     bg1 = s1.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, prs.slide_width, prs.slide_height)
     bg1.fill.solid()
@@ -601,7 +599,6 @@ def build_pptx(data, student, dept, teacher, is_rtl):
     
     main_en_topic = data.get("main_en_topic", "")
     
-    # سلایدێن ناڤەرۆکێ
     for idx_s, s_item in enumerate(data.get("slides", [])):
         sl = prs.slides.add_slide(blank_layout)
         bg = sl.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, prs.slide_width, prs.slide_height)
