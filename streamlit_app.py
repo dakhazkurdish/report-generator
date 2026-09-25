@@ -195,6 +195,15 @@ def fetch_slide_image(keyword, topic_context=""):
 def parse_keys(raw_input):
     return [k.strip() for k in re.split(r'[,;\s]+', raw_input) if k.strip()]
 
+def extract_clean_json(text):
+    if not text:
+        raise ValueError("دەقێ وەڵامێ یێ بەتاڵە.")
+    start = text.find('{')
+    end = text.rfind('}')
+    if start != -1 and end != -1 and end > start:
+        return json.loads(text[start:end+1])
+    return json.loads(text.strip())
+
 def call_gemini(prompt, keys_list):
     candidate_models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
     headers = {"Content-Type": "application/json"}
@@ -218,20 +227,7 @@ def call_gemini(prompt, keys_list):
                     if candidates and "content" in candidates[0]:
                         parts = candidates[0]["content"].get("parts", [])
                         if parts and "text" in parts[0]:
-                            text_clean = parts[0]["text"].strip()
-                            
-                            # پاقژکرنا باک-تیکێن مارکداون ب رێکەکا پاراستی
-                            if text_clean.startswith("
-```json"):
-                                text_clean = text_clean[7:]
-                            elif text_clean.startswith("
-```"):
-                                text_clean = text_clean[3:]
-                            if text_clean.endswith("
-```"):
-                                text_clean = text_clean[:-3]
-                                
-                            return json.loads(text_clean.strip())
+                            return extract_clean_json(parts[0]["text"])
                 elif res.status_code in [429, 503]:
                     last_error = f"کلیل ({key_idx + 1}) قەرەباڵغ بوو (کۆدێ {res.status_code})، دچیتە سەر کلیلا دی..."
                     break
