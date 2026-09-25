@@ -204,8 +204,30 @@ def extract_clean_json(text):
         return json.loads(text[start:end+1])
     return json.loads(text.strip())
 
+def discover_active_models(api_key):
+    """دۆزینەوەیا ئۆتۆماتیکی یا مۆدێلێن چالاک ڕاستەوخۆ ژ خودێ گووگڵ"""
+    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+    try:
+        res = requests.get(url, timeout=12)
+        if res.status_code == 200:
+            models_data = res.json().get("models", [])
+            valid_models = []
+            for m in models_data:
+                methods = m.get("supportedGenerationMethods", [])
+                if "generateContent" in methods:
+                    clean_name = m.get("name", "").replace("models/", "")
+                    valid_models.append(clean_name)
+            
+            # پێشینە بۆ مۆدێلێن لەز و فلاش
+            flash_models = [m for m in valid_models if "flash" in m.lower() and not any(x in m.lower() for x in ["tts", "image", "live"])]
+            pro_models = [m for m in valid_models if "pro" in m.lower() and not any(x in m.lower() for x in ["tts", "image", "live"])]
+            return flash_models + pro_models + valid_models
+    except Exception:
+        pass
+    # ئەگەر نەهاتە دۆزینەوە، لیستا پاراستی
+    return ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-1.5-flash"]
+
 def call_gemini(prompt, keys_list):
-    candidate_models = ["gemini-2.0-flash", "gemini-2.5-flash"]
     headers = {"Content-Type": "application/json"}
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
@@ -217,35 +239,40 @@ def call_gemini(prompt, keys_list):
     
     last_error = ""
     for key_idx, current_key in enumerate(keys_list):
+        # دۆزینەوەیا مۆدێلێن چالاک بۆ ڤێ کلیلێ ب تایبەتی
+        candidate_models = discover_active_models(current_key)
+        
         for model_name in candidate_models:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={current_key}"
-            for attempt in range(2):
-                try:
-                    res = requests.post(url, headers=headers, json=payload, timeout=90)
-                    if res.status_code == 200:
-                        data = res.json()
-                        candidates = data.get("candidates", [])
-                        if candidates and "content" in candidates[0]:
-                            parts = candidates[0]["content"].get("parts", [])
-                            if parts and "text" in parts[0]:
-                                return extract_clean_json(parts[0]["text"])
-                    elif res.status_code in [429, 503]:
-                        last_error = f"کلیل ({key_idx + 1}) قەرەباڵغ بوو، چاڤەڕێی سەرچاوەیێ دویڤدا بە..."
-                        time.sleep(10)
-                        break
-                    elif res.status_code == 404:
-                        break
-                    else:
-                        last_error = f"خەلەتیا API: {res.status_code} - {res.text}"
-                        break
-                except requests.exceptions.Timeout:
-                    last_error = "دەمی وەڵامێ درێژ کێشا (Timeout)، ئینتەرنێت لاوازە."
-                    continue
-                except Exception as e:
-                    last_error = str(e)
-                    continue
-                    
-    raise Exception(last_error or "پەیوەندی دروست نەبوو، کلیل و ئینتەرنێتا خوە بپشکنە.")
+            try:
+                res = requests.post(url, headers=headers, json=payload, timeout=90)
+                if res.status_code == 200:
+                    data = res.json()
+                    candidates = data.get("candidates", [])
+                    if candidates and "content" in candidates[0]:
+                        parts = candidates[0]["content"].get("parts", [])
+                        if parts and "text" in parts[0]:
+                            return extract_clean_json(parts[0]["text"])
+                elif res.status_code in [429, 503]:
+                    last_error = f"کلیلا ({key_idx + 1}) قەرەباڵغە (429)، دەرباز دەبێتە سەر کلیلا دی..."
+                    break  # ئێکسەر دچیتە سەر کلیلا دی
+                elif res.status_code == 404:
+                    continue  # بچە سەر مۆدێلێ دویڤدا
+                else:
+                    try:
+                        err_detail = res.json().get("error", {}).get("message", res.text)
+                    except Exception:
+                        err_detail = res.text
+                    last_error = f"خەلەتیا API ({res.status_code}): {err_detail}"
+                    break
+            except requests.exceptions.Timeout:
+                last_error = "دەمی وەڵامێ درێژ کێشا (Timeout)، ئینتەرنێت لاوازە."
+                continue
+            except Exception as e:
+                last_error = str(e)
+                continue
+                
+    raise Exception(last_error or "پەیوەندی دروست نەبوو. تکایە پشتڕاست ببە کو کلیلا API یا دروستە.")
 
 def generate_report(topic, lang, pages, student, dept, teacher, notes, academic_lvl, s_count, keys_list, progress_bar, status_text):
     num_sections = max(3, min(5, pages - 2))
