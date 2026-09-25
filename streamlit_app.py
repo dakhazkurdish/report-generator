@@ -76,8 +76,8 @@ with st.container():
     with col2:
         teacher_name = st.text_input("👨‍🏫 ناڤێ مامۆستایێ بابەتی:")
         topic = st.text_input("📝 بابەتێ سەرەکی یێ ڕاپۆرتێ:")
-        pages_count = st.slider("📄 ژمارا لاپەڕێن پێدڤی بۆ ڕاپۆرتێ:", min_value=3, max_value=25, value=6)
-        slides_count = st.slider("📊 ژمارا سلایدێن پاوەرپۆینتێ (Seminar):", min_value=4, max_value=15, value=5)
+        pages_count = st.slider("📄 ژمارا لاپەڕێن پێدڤی بۆ ڕاپۆرتێ:", min_value=3, max_value=25, value=12)
+        slides_count = st.slider("📊 ژمارا سلایدێن پاوەرپۆینتێ (Seminar):", min_value=4, max_value=15, value=6)
 
 col_sub1, col_sub2 = st.columns(2)
 with col_sub1:
@@ -86,8 +86,8 @@ with col_sub2:
     uploaded_logo = st.file_uploader("🏛️ بارکرنا لۆگۆیێ فەرمی یێ زانکۆیێ (ئارەزوومەندانە):", type=["png", "jpg", "jpeg"])
 
 custom_notes = st.text_area(
-    "💡 فەرمان و تێبینیێن تایبەت (تەوەرێن گرنگ، قەبارێ خەتی، گوهۆڕینا رەنگان):",
-    placeholder="بۆ نموونە: تیشکێ بێخە سەر بەشێ مێژوویێ، ل پاوەرپۆینتێ قەبارێ خەتێ سەرەکی ٢٨ بیت...",
+    "💡 فەرمان و تێبینیێن تایبەت (ئەڤ فەرمانە دێ ڕاستەوخۆ هێنە جێبەجێکرن، بێی کو دەق بچیتە ناڤ ڕاپۆرتێ):",
+    placeholder="بۆ نموونە: قەبارێ خەتێ سەرەکی ٢٦ بیت، گرنگیێ بدە لایەنێ کرداری و کۆمەلایەتی، بەراوردکرنێ ل ناڤدا بکە...",
     height=80
 )
 
@@ -205,11 +205,6 @@ def fetch_slide_image(keyword, topic_context=""):
     return None
 
 def apply_slide_transition_and_animations(slide, text_shape_id=None, num_points=0):
-    """
-    زێدەکرنا ئەنیمەیشنا گواستنەوەیا سلایدان (Transition Fade)
-    دگەل ئەنیمەیشنا دەرکەفتنا خاڵان ب شێوازێ کلیک-بۆ-کلیک (On-Click Paragraph Entrance)
-    """
-    # 1. ئەنیمەیشنا گواستنەوەیا نەرم یا سلایدان (Smooth Fade Transition)
     transition_xml = parse_xml(r'''
         <p:transition xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" spd="med">
             <p:fade/>
@@ -217,7 +212,6 @@ def apply_slide_transition_and_animations(slide, text_shape_id=None, num_points=
     ''')
     slide._element.append(transition_xml)
 
-    # ئەگەر سلاید خاڵێن هەبن، ئەنیمەیشنا خاڵ-بۆ-خاڵ بۆ چێدکەین
     if not text_shape_id or num_points <= 0:
         return
 
@@ -329,7 +323,7 @@ def call_gemini(prompt, keys_list, status_text=None):
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
             "response_mime_type": "application/json",
-            "maxOutputTokens": 4096
+            "maxOutputTokens": 8192
         }
     }
     
@@ -342,7 +336,7 @@ def call_gemini(prompt, keys_list, status_text=None):
             max_retries = 2
             for attempt in range(max_retries):
                 try:
-                    res = requests.post(url, headers=headers, json=payload, timeout=90)
+                    res = requests.post(url, headers=headers, json=payload, timeout=120)
                     if res.status_code == 200:
                         data = res.json()
                         candidates = data.get("candidates", [])
@@ -378,40 +372,45 @@ def call_gemini(prompt, keys_list, status_text=None):
     raise Exception(f"{last_error} - تکایە چەند خولەکان بێهنڤەدە یان کلیلەکا دی یا Gemini زێدە بکە.")
 
 def generate_report(topic, lang, pages, student, dept, teacher, notes, academic_lvl, s_count, keys_list, progress_bar, status_text):
-    num_sections = max(3, min(5, pages - 2))
+    # ژمارا بەشان ب شێوەیەکێ دروست بۆ پڕکرنا هەمی لاپەڕێن داخوازیار بەرفرهـ دبیت
+    # بۆ نموونە: ئەگەر ١٢ بەرپەر بن، دێ ٨ بۆ ١٠ بەشێن تێر و تەسەل دروست بن
+    num_sections = max(4, min(14, pages - 2))
     
     notes_prompt_part = ""
     if notes.strip():
         notes_prompt_part = f"""
         =======================================================
-        ⚠️ CRITICAL USER INSTRUCTIONS:
+        🚨 SUPREME USER DIRECTIVES (HIGHEST PRIORITY):
         "{notes.strip()}"
         
-        RULES:
-        1. DO NOT print, quote, or copy these user instructions as literal text inside the report or slides.
-        2. Apply the requested scholarly angle, topics, and specific font sizes/colors into the JSON configuration below.
+        MANDATORY RULES FOR USER DIRECTIVES:
+        1. UNDER NO CIRCUMSTANCES should you write or quote these directives as literal text.
+        2. Strictly adapt the contents, deep discussions, academic angles, and focus areas to fully satisfy these directives.
+        3. Extract any styling overrides (font size, colors) into the "styling" JSON object.
         =======================================================
         """
         
-    status_text.write("⚡ ژیرییا دەستکرد هەمی ڕاپۆرت و سمینارێ ئامادە دکەت...")
+    status_text.write("⚡ ژیرییا دەستکرد هەمی ڕاپۆرت و تەوەرێن بەرفرهـ ئامادە دکەت...")
     progress_bar.progress(35)
     
     prompt = f"""
-    You are an expert academic scholar and presentation designer.
-    Create a complete academic research report and presentation slides for: "{topic}".
-    Language: {lang}.
+    You are an elite professor and academic researcher tasked with writing a COMPREHENSIVE, HIGH-VOLUME academic research report.
+    Topic: "{topic}".
+    Language: Strictly in {lang}.
     Academic Level: {academic_lvl}.
+    Target Page Volume: EXACTLY {pages} pages in Microsoft Word.
     Student: "{student}", Department: "{dept}", Supervisor: "{teacher}".
-    Required Sections count: {num_sections}.
-    Required Presentation Slides count: {s_count}.
+    Required Presentation Slides: EXACTLY {s_count} slides.
 
     {notes_prompt_part}
 
-    CRITICAL RULES:
-    1. Write everything inside strictly in {lang} (except English query for image search).
-    2. Write scholarly, rich paragraphs for EACH section inside "sections".
-    3. Exactly {s_count} slides inside "slides".
-    4. Provide the "styling" object based on user notes if given, otherwise keep default aesthetic values.
+    CRITICAL LENGTH & EXPANSION INSTRUCTIONS:
+    1. The report MUST be very long and detailed to physically fill {pages} printed pages in Word.
+    2. You MUST generate EXACTLY {num_sections} main sections inside "sections".
+    3. For EVERY single section inside "sections", write AT LEAST 3 to 5 comprehensive, scholarly paragraphs with in-depth academic analysis, theoretical frameworks, real-world examples, critical discussions, and structured points separated by '\\n\\n'. NEVER write a single short paragraph!
+    4. Write a rich, detailed Abstract (250-350 words) and a profound Conclusion (at least 3 long paragraphs).
+    5. Provide at least 6 to 10 authoritative APA references.
+    6. Provide exactly {s_count} well-structured slides.
 
     Return strictly a valid JSON object matching this schema:
     {{
@@ -424,20 +423,19 @@ def generate_report(topic, lang, pages, student, dept, teacher, notes, academic_
             "slide_title_size_pt": 26,
             "slide_body_size_pt": 18
         }},
-        "title": "Full Academic Title in {lang}",
-        "abstract": "Academic abstract in {lang} (120-180 words)",
+        "title": "Full Scholarly Academic Title in {lang}",
+        "abstract": "Deep academic abstract in {lang} (250-350 words)...",
         "english_main_topic": "2 simple english words for topic",
         "sections": [
             {{
-                "heading": "Section Title in {lang}",
-                "content": "Scholarly detailed text in paragraphs..."
+                "heading": "Section Heading in {lang}",
+                "content": "Paragraph 1 (Deep academic intro and literature)...\\n\\nParagraph 2 (In-depth analysis, critical discussions, mechanisms)...\\n\\nParagraph 3 (Practical case studies, methodologies, empirical evidence)...\\n\\nParagraph 4 (Future perspectives, challenges, evaluation)..."
             }}
         ],
-        "conclusion": "Formal academic conclusion in {lang}",
+        "conclusion": "Profound academic conclusion in 3 rich paragraphs in {lang}...",
         "references": [
-            "APA Reference 1",
-            "APA Reference 2",
-            "APA Reference 3"
+            "Author, A. A. (Year). Title of work. Publisher.",
+            "Author, B. B. (Year). Title of article. Journal Name, Vol(Issue), pp-pp."
         ],
         "slides": [
             {{
@@ -476,6 +474,8 @@ def build_docx(data, student, dept, teacher, is_rtl, with_border=True, user_logo
     body_size = int(styling.get("word_body_size_pt", 14))
 
     doc = Document()
+    
+    # لاپەڕێ ڕووبەر (Cover Page)
     section_cover = doc.sections[0]
     section_cover.top_margin = Inches(1)
     section_cover.bottom_margin = Inches(1)
@@ -528,6 +528,7 @@ def build_docx(data, student, dept, teacher, is_rtl, with_border=True, user_logo
     )
     format_run(r_meta, size_pt=14, bold=True, color_rgb=(51, 65, 85), is_rtl=is_rtl)
     
+    # لاپەڕێن ناڤەرۆکێ (Body Section)
     section_body = doc.add_section()
     section_body.top_margin = Inches(1)
     section_body.bottom_margin = Inches(1)
@@ -551,6 +552,7 @@ def build_docx(data, student, dept, teacher, is_rtl, with_border=True, user_logo
     
     doc.add_page_break()
     
+    # پێڕستا ناڤەرۆکێ (Table of Contents)
     p_toc_h = doc.add_paragraph()
     set_docx_rtl(p_toc_h, is_rtl)
     r_toc_h = p_toc_h.add_run("پێڕستا ناڤەرۆکێ (Table of Contents)" if is_rtl else "Table of Contents")
@@ -596,11 +598,13 @@ def build_docx(data, student, dept, teacher, is_rtl, with_border=True, user_logo
         
     doc.add_page_break()
     
-    for idx, sec in enumerate(data.get("sections", [])):
+    # تەوەر و بەشێن سەرەکی (Sections)
+    sections_list = data.get("sections", [])
+    for idx, sec in enumerate(sections_list):
         p_sec_h = doc.add_paragraph()
         set_docx_rtl(p_sec_h, is_rtl)
-        p_sec_h.paragraph_format.space_before = Pt(20)
-        p_sec_h.paragraph_format.space_after = Pt(8)
+        p_sec_h.paragraph_format.space_before = Pt(24)
+        p_sec_h.paragraph_format.space_after = Pt(10)
         r_sec_h = p_sec_h.add_run(convert_numbers(f"{idx+1}. {sec.get('heading', '')}", is_rtl))
         format_run(r_sec_h, size_pt=16, bold=True, color_rgb=title_color_rgb, is_rtl=is_rtl)
         
@@ -610,33 +614,50 @@ def build_docx(data, student, dept, teacher, is_rtl, with_border=True, user_logo
                 continue
             p_sec = doc.add_paragraph()
             set_docx_rtl(p_sec, is_rtl)
-            p_sec.paragraph_format.line_spacing = 1.3
+            p_sec.paragraph_format.line_spacing = 1.35
             p_sec.paragraph_format.space_after = Pt(12)
             r_sec = p_sec.add_run(convert_numbers(p_t.strip(), is_rtl))
             format_run(r_sec, size_pt=body_size, bold=False, color_rgb=body_color_rgb, is_rtl=is_rtl)
             
+        # دابەشکرنا بەشان ل سەر لاپەڕان داکو ڕاپۆرت ب دروستی درێژ بیت
+        if idx < len(sections_list) - 1:
+            doc.add_page_break()
+            
+    doc.add_page_break()
+    
+    # دەرئەنجام (Conclusion)
     p_con_h = doc.add_paragraph()
     set_docx_rtl(p_con_h, is_rtl)
     p_con_h.paragraph_format.space_before = Pt(22)
+    p_con_h.paragraph_format.space_after = Pt(10)
     r_con_h = p_con_h.add_run("دەرئەنجام (Conclusion)" if is_rtl else "Conclusion")
     format_run(r_con_h, size_pt=16, bold=True, color_rgb=title_color_rgb, is_rtl=is_rtl)
     
-    p_con = doc.add_paragraph()
-    set_docx_rtl(p_con, is_rtl)
-    p_con.paragraph_format.line_spacing = 1.3
-    r_con = p_con.add_run(convert_numbers(data.get("conclusion", ""), is_rtl))
-    format_run(r_con, size_pt=body_size, bold=False, color_rgb=body_color_rgb, is_rtl=is_rtl)
+    con_paras = data.get("conclusion", "").split("\n\n")
+    for cp in con_paras:
+        if not cp.strip():
+            continue
+        p_con = doc.add_paragraph()
+        set_docx_rtl(p_con, is_rtl)
+        p_con.paragraph_format.line_spacing = 1.35
+        p_con.paragraph_format.space_after = Pt(12)
+        r_con = p_con.add_run(convert_numbers(cp.strip(), is_rtl))
+        format_run(r_con, size_pt=body_size, bold=False, color_rgb=body_color_rgb, is_rtl=is_rtl)
     
+    doc.add_page_break()
+    
+    # سەرچاوەکان (References)
     p_ref_h = doc.add_paragraph()
     set_docx_rtl(p_ref_h, is_rtl)
     p_ref_h.paragraph_format.space_before = Pt(24)
+    p_ref_h.paragraph_format.space_after = Pt(12)
     r_ref_h = p_ref_h.add_run("سەرچاوەکان (References)" if is_rtl else "References")
     format_run(r_ref_h, size_pt=16, bold=True, color_rgb=title_color_rgb, is_rtl=is_rtl)
     
     for ref in data.get("references", []):
         p_ref = doc.add_paragraph()
         set_docx_rtl(p_ref, is_rtl)
-        p_ref.paragraph_format.space_after = Pt(6)
+        p_ref.paragraph_format.space_after = Pt(8)
         r_ref = p_ref.add_run(f"• {convert_numbers(ref, is_rtl)}")
         format_run(r_ref, size_pt=13, bold=False, color_rgb=(70, 80, 95), is_rtl=is_rtl)
         
@@ -648,12 +669,11 @@ def build_docx(data, student, dept, teacher, is_rtl, with_border=True, user_logo
 def build_pptx(data, student, dept, teacher, is_rtl):
     styling = data.get("styling", {})
     
-    # ڤەگەڕاندنا دیزاینێ سەرەکی یێ شاهانە (Dark Midnight Slate & Amber Gold)
-    DARK_BG = PptxRGBColor(15, 23, 42)      # رەنگێ بنەما یێ تاری یێ ئەکادیمی
-    ACCENT_GOLD = PptxRGBColor(245, 158, 11) # ئاڵتونی گەش بۆ ناڤونیشانان
+    DARK_BG = PptxRGBColor(15, 23, 42)
+    ACCENT_GOLD = PptxRGBColor(245, 158, 11)
     WHITE = PptxRGBColor(255, 255, 255)
     LIGHT_GRAY = PptxRGBColor(203, 213, 225)
-    CARD_BG = PptxRGBColor(30, 41, 59)      # سندوقا رێکوپێک یا ناڤەرۆکێ
+    CARD_BG = PptxRGBColor(30, 41, 59)
     
     title_size_pt = int(styling.get("slide_title_size_pt", 26))
     body_size_pt = int(styling.get("slide_body_size_pt", 18))
@@ -663,7 +683,7 @@ def build_pptx(data, student, dept, teacher, is_rtl):
     prs.slide_height = PptxInches(7.5)
     blank_layout = prs.slide_layouts[6]
     
-    # ------------------ لاپەڕێ پێشەکی (Cover Slide) ------------------
+    # سلایدێ سەرەکی
     s1 = prs.slides.add_slide(blank_layout)
     bg1 = s1.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, prs.slide_width, prs.slide_height)
     bg1.fill.solid()
@@ -701,12 +721,10 @@ def build_pptx(data, student, dept, teacher, is_rtl):
     if is_rtl: 
         p_inf._pPr.set('rtl', '1')
     
-    # زێدەکرنا ئەنیمەیشنا گواستنەوەیا نەرم بۆ سلایدێ ئێکێ
     apply_slide_transition_and_animations(s1, None, 0)
     
     main_en_topic = data.get("main_en_topic", "")
     
-    # ------------------ سلایدێن ناڤەرۆکێ (Content Slides) ------------------
     for idx_s, s_item in enumerate(data.get("slides", [])):
         sl = prs.slides.add_slide(blank_layout)
         bg = sl.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, prs.slide_width, prs.slide_height)
@@ -738,7 +756,6 @@ def build_pptx(data, student, dept, teacher, is_rtl):
         else:
             text_left, text_width = PptxInches(1.5), PptxInches(10.333)
             
-        # چوارچێوەیێ سندوقێ یێ ئاڵتونی
         card = sl.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, text_left, PptxInches(1.8), text_width, PptxInches(5.0))
         card.fill.solid()
         card.fill.fore_color.rgb = CARD_BG
@@ -766,7 +783,6 @@ def build_pptx(data, student, dept, teacher, is_rtl):
             except Exception:
                 pass
         
-        # جێبەجێکرنا ئەنیمەیشنا گواستنەوەیا نەرم + دەرکەفتنا خاڵان ب کلیکێ
         apply_slide_transition_and_animations(sl, c_box.shape_id, len(pts))
             
     bio = io.BytesIO()
