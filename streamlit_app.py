@@ -57,7 +57,10 @@ st.title("سیستەمێ زیرەک یێ دروستکرنا راپورت و سم
 
 raw_api_key = st.secrets.get("GEMINI_API_KEY", "")
 if not raw_api_key:
-    raw_api_key = st.text_input("کلیلا Gemini API لێرە بنڤیسە (دشێی چەند کلیلان ب کۆما جودا بکەی):", type="password")
+    raw_api_key = st.text_input(
+        "🔑 کلیلا Gemini API لێرە بنڤیسە (تێبینی: دشێی ٢ یان ٣ کلیلێن جودا ب فاریزە ',' دابنێ):", 
+        type="password"
+    )
 
 with st.container():
     col1, col2 = st.columns(2)
@@ -204,9 +207,9 @@ def extract_clean_json(text):
         return json.loads(text[start:end+1])
     return json.loads(text.strip())
 
-def call_gemini(prompt, keys_list):
-    # نوێترین مۆدێلێن چالاک و پشتڕاستکری
-    candidate_models = ["gemini-2.5-flash", "gemini-3.1-pro-preview", "gemini-2.0-flash"]
+def call_gemini(prompt, keys_list, status_text=None):
+    # مۆدێلێن چالاک و فەرمی
+    candidate_models = ["gemini-2.5-flash", "gemini-2.0-flash"]
     headers = {"Content-Type": "application/json"}
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
@@ -217,37 +220,56 @@ def call_gemini(prompt, keys_list):
     }
     
     last_error = ""
-    for key_idx, current_key in enumerate(keys_list):
-        for model_name in candidate_models:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={current_key}"
-            try:
-                res = requests.post(url, headers=headers, json=payload, timeout=90)
-                if res.status_code == 200:
-                    data = res.json()
-                    candidates = data.get("candidates", [])
-                    if candidates and "content" in candidates[0]:
-                        parts = candidates[0]["content"].get("parts", [])
-                        if parts and "text" in parts[0]:
-                            return extract_clean_json(parts[0]["text"])
-                elif res.status_code in [429, 503]:
-                    # ئەگەر ئەڤ کلیلە تێر بووبوو، بلا ڕاستەوخۆ بچیتە سەر کلیلا دویڤدا
-                    last_error = f"کلیل ({key_idx + 1}) قەرەباڵغ بوو (کۆدێ {res.status_code})، دچیتە سەر کلیلا دی..."
-                    break
-                elif res.status_code == 404:
-                    # ئەگەر مۆدێل نەما، بلا نەوەستیت و بچیتە سەر مۆدێلێ دویڤدا
-                    last_error = f"مۆدێلێ {model_name} بەردەست نەبوو (404)، دچیتە سەر یێ دویڤدا..."
-                    continue
-                else:
-                    last_error = f"خەلەتیا API: {res.status_code} - {res.text}"
-                    continue
-            except requests.exceptions.Timeout:
-                last_error = "دەمی وەڵامێ درێژ کێشا (Timeout)، ئینتەرنێت لاوازە."
-                continue
-            except Exception as e:
-                last_error = str(e)
-                continue
+    max_rounds = 3  # هەتا ٣ خولان تاقی دکەت ئەگەر هەردوو کلیل قەرەباڵغ بوون
+
+    for current_round in range(1, max_rounds + 1):
+        for key_idx, current_key in enumerate(keys_list):
+            for model_name in candidate_models:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={current_key}"
+                try:
+                    res = requests.post(url, headers=headers, json=payload, timeout=90)
                     
-    raise Exception(last_error or "پەیوەندی دروست نەبوو، کلیل و ئینتەرنێتا خوە بپشکنە.")
+                    if res.status_code == 200:
+                        data = res.json()
+                        candidates = data.get("candidates", [])
+                        if candidates and "content" in candidates[0]:
+                            parts = candidates[0]["content"].get("parts", [])
+                            if parts and "text" in parts[0]:
+                                return extract_clean_json(parts[0]["text"])
+                                
+                    elif res.status_code in [429, 503]:
+                        last_error = f"کلیل ({key_idx + 1}) قەرەباڵغ بوو (کۆدێ {res.status_code})."
+                        # ئێکسەر دەرباز دبیتە سەر کلیلا دویڤدا
+                        break
+                        
+                    elif res.status_code == 404:
+                        # ئەگەر مۆدێل نەما، دەستبەجێ بچە مۆدێلێ دی
+                        continue
+                    else:
+                        last_error = f"خەلەتیا API: {res.status_code} - {res.text}"
+                        continue
+                        
+                except requests.exceptions.Timeout:
+                    last_error = "دەمی وەڵامێ درێژ کێشا (Timeout)، ئینتەرنێت لاوازە."
+                    continue
+                except Exception as e:
+                    last_error = str(e)
+                    continue
+
+        # ئەگەر هەمی کلیلان 429 دا، کێمەکێ ڕاوەستە و دووبارە تاقی بکە
+        if current_round < max_rounds:
+            wait_time = 10 * current_round
+            if status_text:
+                status_text.warning(f"⏳ سێرڤەرێن گووگڵ قەرەباڵغن، ب تنێ {wait_time} چرکەیان بوەستە سیستەم دێ ب ئۆتۆماتیکی دووبارە تاقی کەت...")
+            time.sleep(wait_time)
+            if status_text:
+                status_text.info("⚡ دووبارە پشکنین دەستپێکر...")
+                    
+    raise Exception(
+        f"{last_error}\n\n"
+        "💡 چارەسەری: ئەگەر هەردوو کلیل ژ ئێک ئەکاونتێ گووگڵ بن، سنوورێ وان ئێکە. "
+        "تکایە ب ئیمەیڵەکێ (Gmail) دی کلیلەکێ چێکە دا قەبارێ تە نوو ببیتەڤە."
+    )
 
 def generate_report(topic, lang, pages, student, dept, teacher, notes, academic_lvl, s_count, keys_list, progress_bar, status_text):
     num_sections = max(3, min(6, pages - 2))
@@ -305,7 +327,7 @@ def generate_report(topic, lang, pages, student, dept, teacher, notes, academic_
     }}
     """
     
-    result = call_gemini(prompt, keys_list)
+    result = call_gemini(prompt, keys_list, status_text)
     progress_bar.progress(85)
     status_text.write("فایلێن Word و PowerPoint دروست دبن...")
     
