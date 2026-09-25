@@ -725,5 +725,5 @@ if st.session_state.get("generated", False):
     st.markdown("### 📋 دەقێ ڕاپۆرتێ بۆ کۆپیکردنا ڕاستەوخۆ:")
     st.caption("دشێی ڤی دەقی دیاربکەی (Ctrl+A پاشان Ctrl+C) و پەیست بکەیە ناڤ وۆردێ خو بێی داگرتن:")
     st.text_area("", value=st.session_state["plain_text"], height=400)
-```eof
+
 
