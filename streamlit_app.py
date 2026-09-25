@@ -205,7 +205,8 @@ def extract_clean_json(text):
     return json.loads(text.strip())
 
 def call_gemini(prompt, keys_list):
-    candidate_models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.5-pro"]
+    # نوێترین مۆدێلێن چالاک و پشتڕاستکری
+    candidate_models = ["gemini-2.5-flash", "gemini-3.1-pro-preview", "gemini-2.0-flash"]
     headers = {"Content-Type": "application/json"}
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
@@ -229,8 +230,13 @@ def call_gemini(prompt, keys_list):
                         if parts and "text" in parts[0]:
                             return extract_clean_json(parts[0]["text"])
                 elif res.status_code in [429, 503]:
+                    # ئەگەر ئەڤ کلیلە تێر بووبوو، بلا ڕاستەوخۆ بچیتە سەر کلیلا دویڤدا
                     last_error = f"کلیل ({key_idx + 1}) قەرەباڵغ بوو (کۆدێ {res.status_code})، دچیتە سەر کلیلا دی..."
                     break
+                elif res.status_code == 404:
+                    # ئەگەر مۆدێل نەما، بلا نەوەستیت و بچیتە سەر مۆدێلێ دویڤدا
+                    last_error = f"مۆدێلێ {model_name} بەردەست نەبوو (404)، دچیتە سەر یێ دویڤدا..."
+                    continue
                 else:
                     last_error = f"خەلەتیا API: {res.status_code} - {res.text}"
                     continue
